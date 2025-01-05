@@ -1,8 +1,17 @@
 # Pull base image.
-FROM jlesage/baseimage-gui:debian-11
+FROM jlesage/baseimage-gui:debian-12-v4.6
 
+# hook into docker BuildKit --platform support
+# see https://docs.docker.com/engine/reference/builder/#automatic-platform-args-in-the-global-scope
+
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
+# Steam credentials
 ARG STEAM_USER
 ARG STEAM_PASS
+
 # Steam appId
 ARG SRCDS_APPID
 
@@ -11,8 +20,16 @@ ENV APP_NAME="StardewValley"
 ## Uses a distinct PATH from Stardew/game/ that GOG has.
 ENV GAME_PATH="/data/Stardew/game"
 
-## lib32gcc-s1 is required for steamcmd
-RUN apt-get update && apt-get install -y wget unzip tar strace mono-complete xterm gettext-base jq netcat procps lib32gcc-s1 locales && apt-get clean
+#set invariant mode for dotnet for arm64 builds
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
+# copy build scripts
+COPY ./build /build/
+
+
+# install packages
+RUN /build/install-packages && \
+    /build/setup-arch
 
 # Game + ModLoader 1.6.2 4.0.1
 
@@ -54,7 +71,7 @@ RUN wget -qO dotnet.tar.gz https://download.visualstudio.microsoft.com/download/
 RUN wget --user-agent="Mozilla" https://github.com/Pathoschild/SMAPI/releases/download/4.0.8/SMAPI-4.0.8-installer.zip -qO /data/nexus.zip && \
     unzip /data/nexus.zip -d /data/nexus/ && \
     SMAPI_INSTALLER=$(find /data/nexus -name 'SMAPI*.*Installer' -type f -path "*/SMAPI * installer/internal/linux/*" | head -n 1) && \
-    /bin/bash -c "SMAPI_NO_TERMINAL=true SMAPI_USE_CURRENT_SHELL=true echo -e '2\n\n' | \"$SMAPI_INSTALLER\" --install --game-path \"$GAME_PATH\"" || :
+    /bin/bash -c "SMAPI_NO_TERMINAL=true SMAPI_USE_CURRENT_SHELL=true echo -e '2\n\n' | box86 \"$SMAPI_INSTALLER\" --install --game-path \"$GAME_PATH\"" || :
 
 # Add Mods & Scripts
 COPY ["mods/", "$GAME_PATH/Mods/"]

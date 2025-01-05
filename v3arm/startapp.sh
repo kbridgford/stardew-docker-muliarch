@@ -32,8 +32,8 @@ done
 
 # Ready to start!
 
-export XAUTHORITY=~/.Xauthority
-sed -i 's/env TERM=xterm $LAUNCHER "$@"/env SHELL=\/bin\/bash TERM=xterm xterm  -e "\/bin\/bash -c $LAUNCHER \"$@\""/' $GAME_PATH/Stardew\ Valley
+#export XAUTHORITY=~/.Xauthority
+#sed -i 's/env TERM=xterm $LAUNCHER "$@"/env SHELL=\/bin\/bash TERM=xterm xterm  -e "\/bin\/bash -c $LAUNCHER \"$@\""/' $GAME_PATH/Stardew\ Valley
 
 bash -c "$GAME_PATH/start.sh"
 

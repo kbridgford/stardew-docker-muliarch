@@ -1,0 +1,56 @@
+#!/bin/sh
+
+set -eu
+
+if [ "$TARGETARCH" = "arm64" ] ; then
+  
+  #setup sources for precompiled box64 and box86
+
+
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  debian-keyring \
+  curl
+
+  curl -L https://ryanfortner.github.io/box64-debs/box64.list -o /etc/apt/sources.list.d/box64.list
+  curl -L https://ryanfortner.github.io/box64-debs/KEY.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/box64-debs-archive-keyring.gpg
+  curl -L https://ryanfortner.github.io/box86-debs/box86.list -o /etc/apt/sources.list.d/box86.list
+  curl -L https://ryanfortner.github.io/box86-debs/KEY.gpg | gpg --dearmor | tee /etc/apt/trusted.gpg.d/box86-debs-archive-keyring.gpg
+  
+  dpkg --add-architecture armhf
+  dpkg --add-architecture i386
+
+  apt-get update
+
+  #install dependancies for steamcmd on ARM64
+
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
+		libc6:i386 \
+		libc6:armhf \
+		libcurl4 \
+		libcurl4:i386 \
+		libnuma1 \
+		libnuma1:i386 \
+		libglib2.0-0 \
+		libglib2.0-0:i386 \
+		openssl \
+		ca-certificates \
+		nano \
+		gnupg \
+    box64 \
+		box86-generic-arm 
+
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
+
+else
+
+  #install dependancies for steamcmd on AMD64
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  lib32gcc-s1
+
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
+
+fi

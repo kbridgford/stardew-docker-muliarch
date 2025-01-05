@@ -1,9 +1,10 @@
-version: '2.2'
-
 services:
   valley:
     build:
       context: docker
+      platforms:
+      - "linux/amd64"
+      #- "linux/arm64"
       dockerfile: Dockerfile-steam
       args:
         ## Recommended: set as env_variable during build

@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# Move to game folder
+cd "`dirname "$0"`"
+
+# Get the current version of macOS
+os_ver=$(sw_vers -productVersion)
+IFS='.' read -r -a ver <<< "$os_ver"
+
+# If we're trying to run the game on macOS, ensure that we're running a version of the OS that supports .NET 5.0
+if [[ "$OSTYPE" == "darwin"* ]]; then
+	if [[ ${ver[0]} -lt 10 || ("${ver[0]}" -eq 10 && "${ver[1]}" -lt 13) ]]; then
+		osascript <<EOD
+display dialog "This version of Stardew Valley requires macOS High Sierra (10.13) or higher, but you may be able to play on the Compatibility branch.\n\nClick on the \"More info\" button for a detailed guide." buttons {"Close", "More info..."} default button "Close" cancel button "Close"
+
+if result = {button returned:"More info..."} then
+	open location "https://www.stardewvalley.net/compatibility"
+end if
+
+EOD
+		exit 1
+	fi
+	
+fi
+
+#Run the executable.
+./"Stardew Valley" $@
+
+
