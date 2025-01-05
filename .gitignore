@@ -23,5 +23,7 @@ bundles/
 vendor/pkg/
 pyenv
 Vagrantfile
-
 valley_saves
+steamcmd/*
+*steamcmd.tar.gz
+valleybin/*
