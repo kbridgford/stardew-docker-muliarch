@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+architecture=$(dpkg --print-architecture)
+if [[ -n "${TARGETARCH:-}" && "$TARGETARCH" != "$architecture" ]]; then
+    echo "Build architecture $TARGETARCH does not match container architecture $architecture." >&2
+    exit 1
+fi
+case "$architecture" in
+    amd64) echo 'Native amd64 image: Box64 is not required.'; exit 0 ;;
+    arm64) ;;
+    *) echo "Unsupported architecture: $architecture" >&2; exit 1 ;;
+esac
+bash /install-packages.sh ca-certificates curl gnupg
+curl --fail --location https://ryanfortner.github.io/box64-debs/KEY.gpg \
+    | gpg --dearmor --batch --yes -o /usr/share/keyrings/box64.gpg
+printf '%s\n' \
+    'deb [arch=arm64 signed-by=/usr/share/keyrings/box64.gpg] https://ryanfortner.github.io/box64-debs/debian/ ./' \
+    > /etc/apt/sources.list.d/box64.list
+bash /install-packages.sh "${BOX64_PACKAGE:-box64}"
+command -v box64
+dpkg-query -W "${BOX64_PACKAGE:-box64}"
+apt-get clean

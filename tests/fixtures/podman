@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${MOCK_PODMAN_CALLS:?}"
+case "$1 $2" in
+    'info --format') printf '{"host":{"arch":"%s","security":{"rootless":true}}}\n' "${MOCK_HOST_ARCH:-amd64}" ;;
+    'build --platform'|'buildx build')
+        [[ "${MOCK_BUILD_FAIL:-0}" == 0 ]] || exit 23
+        if [[ -n "${MOCK_CHECK_LOCK:-}" ]]; then
+            if flock -n -x "$MOCK_CHECK_LOCK" -c true; then
+                echo 'Build did not hold its shared cache lock.' >&2
+                exit 24
+            fi
+        fi ;;
+    'image inspect') printf '%s\n' "${MOCK_IMAGE_ARCH:-amd64}" ;;
+    'manifest create') printf '%064d\n' 1 ;;
+    'manifest exists') exit "${MOCK_MANIFEST_MISSING:-0}" ;;
+    'manifest inspect')
+        if [[ "${MOCK_MANIFEST_BAD:-0}" == 1 ]]; then
+            printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}}]}'
+        else
+            printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"arm64"}},{"platform":{"os":"linux","architecture":"amd64"}}]}'
+        fi ;;
+    'manifest rm'|'tag '*) ;;
+    'container exists')
+        if [[ -e "$MOCK_PODMAN_CALLS.container" ]]; then exit 0; fi
+        exit "${MOCK_CONTAINER_EXISTS:-1}" ;;
+    'run --detach')
+        [[ "${MOCK_RUN_FAIL:-0}" == 0 ]] || exit 25
+        touch "$MOCK_PODMAN_CALLS.container"
+        while (( $# )); do
+            case "$1" in
+                --cidfile) printf '%064d' 1 > "$2"; shift 2 ;;
+                --env-file) cp "$2" "${MOCK_RUNTIME_ENV:?}"; shift 2 ;;
+                *) shift ;;
+            esac
+        done ;;
+    'inspect --format')
+        if [[ "$3" == '{{.State.Running}}' ]]; then
+            printf 'true\n'
+        else
+            printf '%s\n' "${MOCK_OWNER:?}"
+        fi ;;
+    'exec '*)
+        [[ "${MOCK_EXEC_FAIL:-0}" == 0 ]] || exit 1 ;;
+    'rm '*) rm -f "$MOCK_PODMAN_CALLS.container" ;;
+    'stop --time'|'logs --tail') ;;
+    *) printf 'Unexpected mock Podman invocation\n' >&2; exit 99 ;;
+esac

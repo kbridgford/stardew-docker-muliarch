@@ -27,3 +27,7 @@ valley_saves
 steamcmd/*
 *steamcmd.tar.gz
 valleybin/*
+/src/
+/.local/
+/.env
+*.local.env

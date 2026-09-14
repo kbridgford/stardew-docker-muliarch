@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${MOCK_CALLS:?}"
+state=${MOCK_STATE:?}
+case "$1" in
+    info) printf '%s\n' '{"host":{"arch":"amd64","security":{"rootless":true}}}' ;;
+    image) printf 'amd64\n' ;;
+    container)
+        [[ "${MOCK_CASE:-}" != query-error ]] || exit 125
+        [[ -e "$state/live" || "${MOCK_CASE:-}" == conflict ]] ;;
+    run)
+        [[ "${MOCK_CASE:-}" != no-create ]] || exit 25
+        while (( $# )); do
+            case "$1" in
+                --cidfile) cidfile=$2; shift 2 ;;
+                --volume)
+                    [[ "$2" != *:/config:Z ]] || printf '%s' "${2%:/config:Z}" > "$state/config"
+                    shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf '%064d' 1 > "$cidfile"
+        touch "$state/live"
+        rm -f "$state/exit"
+        ;;
+    inspect)
+        case "$3" in
+            '{{.Architecture}}') printf 'amd64\n' ;;
+            '{{.State.Running}}') [[ -e "$state/exit" ]] && printf 'false\n' || printf 'true\n' ;;
+            '{{json .State}}') printf '{"Running":false,"ExitCode":%s}\n' "$(cat "$state/exit")" ;;
+            *)
+                if [[ "${MOCK_CASE:-}" == owner-changed ]]; then printf 'unowned\n'
+                else printf '%s\n' "${MOCK_OWNER:?}"; fi ;;
+        esac ;;
+    exec)
+        shift
+        while [[ "$1" == -* ]]; do
+            case "$1" in -i) shift ;; --user) shift 2 ;; *) exit 98 ;; esac
+        done
+        shift
+        case "$1 $2" in
+            'bash -c')
+                config=$(cat "$state/config")
+                marker=${*: -1}
+                mkdir -p "$config"
+                (set -o noclobber; cat > "$config/$marker") ;;
+            'cat /config/'*)
+                cat "$(cat "$state/config")/${2#/config/}" ;;
+            'bash -s')
+                case "$4" in
+                    identify)
+                        cat >/dev/null
+                        printf '123\t456\t1000:1000\t1000:1000\t/data/Stardew/game/StardewModdingAPI\n' ;;
+                    signal)
+                        cat >/dev/null
+                        [[ "${MOCK_CASE:-}" != stale-pid ]] || exit 42
+                        signal=${*: -1}
+                        if [[ "$signal" == TERM ]]; then printf 143; else printf 137; fi > "$state/exit" ;;
+                    *) exit 98 ;;
+                esac ;;
+            *) exit 98 ;;
+        esac ;;
+    wait)
+        [[ "${MOCK_CASE:-}" != wait-failed ]] || exit 124
+        cat "$state/exit"; printf '\n' ;;
+    logs) printf 'Synthetic private container diagnostics\n' ;;
+    stop)
+        [[ "${MOCK_CASE:-}" != cleanup-failed ]] || exit 125 ;;
+    rm) rm -f "$state/live" ;;
+    *) exit 99 ;;
+esac

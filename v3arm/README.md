@@ -17,34 +17,18 @@ in an issue request and I will try to help.
 
 ### Steam
 
-This image will download the game from Steam server using [steamcmd](https://developer.valvesoftware.com/wiki/SteamCMD) if you own the game. For that, it requires your Steam login.
+From the repository root, run `./pullValleyBin.sh` explicitly to acquire your
+vanilla Linux game into `src/steam`. Authentication happens on the host;
+**builds never download Steam/game files or accept Steam credentials**.
+Updates require `./pullValleyBin.sh --refresh`.
 
-The credential variables are required only during building, not during game runtime.
-
-```
-## Set these variables only during the first build or during updates
-export STEAM_USER=<steamUsername>
-export STEAM_PASS=<steamPassword>
-export STEAM_GUARD=<lastesSteamGuardCode> # If you account is not protected, don't set
-
-docker compose -f docker-compose-steam.yml up
-```
-
-#### Steam Guard
-
-If your account is protected by Steam Guard, the build is a little time sensitive. You must open your app and
-export the current Steam Guard to `STEAM_GUARD` environment variable code right before building.
-
-**Note: the code lasts a little longer than shown but not much.**
-
-After starting build, pay attention to your app. Even with the code, it will request for authorization which must be granted.
-
-If the build fails or when you want to update with `docker compose -f docker-compose-steam.yml build --no-cache`, you should set the newer `STEAM_GUARD` again.
-
-```
-## Remove env variables after build
-unset STEAM_USER STEAM_PASS STEAM_GUARD
-```
+This directory's `v3arm-amd64` target preserves the selected vanilla amd64
+experiment. The modded ARM64 experiment now has its own
+[v3arm64 project](../v3arm64/README.md). Use
+`./scripts/podman-steam.sh build TARGET`.
+See [local development](../docs/local-development.md) for the complete target
+matrix, ARM prerequisites, private VNC settings and run/smoke commands.
+Do not refresh concurrently with unmanaged Compose builds.
 ### GOG
 
 To my knowledge there is no way to automate this. To use game files from GOG, you will need to download the Linux installer. 

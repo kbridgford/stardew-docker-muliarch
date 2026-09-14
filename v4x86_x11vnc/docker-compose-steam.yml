@@ -1,21 +1,17 @@
 services:
   valley:
+    platform: linux/amd64
     build:
       context: docker
       dockerfile: Dockerfile-steam
-      args:
-        ## Recommended: set as env_variable during build
-        STEAM_USER: ${STEAM_USER}
-        ## Recommended: set as env_variable during build
-        STEAM_PASS: ${STEAM_PASS}
-        ## Recommended: set as env_variable during build
-        STEAM_GUARD: ${STEAM_GUARD}
-        ## Stardew steamId
-        SRCDS_APPID: 413150
+      additional_contexts:
+        steam: ../src/steam
+        devtools: ../scripts
+        mods: ../mods
     container_name: stardew
     environment:
       # VNC
-      - VNC_PASSWORD=insecure
+      - VNC_PASSWORD=${VNC_PASSWORD:?Set VNC_PASSWORD before running the container}
       - DISPLAY_HEIGHT=900
       - DISPLAY_WIDTH=1200
       - X11VNC_EXTRA_OPTS=-noxdamage -reopen -forever
@@ -128,9 +124,9 @@ services:
 
     ports:
       # VNC
-      - 5902:5900
+      - 127.0.0.1:5902:5900
       # NOVNC WEB
-      - 5801:5800
+      - 127.0.0.1:5801:5800
       # Game  
       - 24642:24642/udp
     volumes:

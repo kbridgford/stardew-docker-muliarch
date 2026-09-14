@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+# Shared target metadata is consumed by the caller.
+# shellcheck disable=SC2034
+
+STARDEW_LABEL=io.stardew.local-project
+STEAM_TARGETS=(v3x86 v3arm-amd64 v4x86-x11vnc v3arm64)
+
+select_target() {
+    TARGET=$1
+    DOCKERFILE=Dockerfile-steam
+    ARCH=amd64
+    MODDED=1
+    case "$TARGET" in
+        v3x86) DIRECTORY=v3x86; COMPOSE_DIRECTORY=v3x86 ;;
+        v3arm-amd64) DIRECTORY=v3arm; COMPOSE_DIRECTORY=v3arm; MODDED=0 ;;
+        v4x86-x11vnc) DIRECTORY=v4x86_x11vnc; COMPOSE_DIRECTORY=v4x86_x11vnc ;;
+        v3arm64)
+            DIRECTORY=v3arm64; COMPOSE_DIRECTORY=v3arm64; ARCH=arm64 ;;
+        *) steam_die "Unknown target: $TARGET" ;;
+    esac
+    local hash
+    hash=$(printf '%s' "$ROOT" | sha256sum)
+    PROJECT=${hash:0:12}
+    CONTAINER="stardew-dev-$PROJECT-$TARGET"
+    IMAGE="localhost/stardew-dev-$PROJECT:$TARGET"
+}
+
+require_handler() {
+    local arch=$1 handler
+    case "$arch" in
+        arm64) handler=/proc/sys/fs/binfmt_misc/qemu-aarch64 ;;
+        amd64) handler=/proc/sys/fs/binfmt_misc/qemu-x86_64 ;;
+        *) steam_die "Unsupported emulated architecture: $arch" ;;
+    esac
+    if [[ ! -f "$handler" ]] || ! grep -qx enabled "$handler" || ! grep -q '^flags:.*F' "$handler"; then
+        steam_die "Missing enabled persistent (F) handler: $handler. See docs/local-development.md."
+    fi
+}
+
+podman_doctor() {
+    local mode=${1:-runtime} info host tool build_arch
+    [[ $EUID -ne 0 ]] || steam_die 'Use rootless Podman, never sudo podman.'
+    for tool in podman curl timeout; do
+        command -v "$tool" >/dev/null || steam_die "Missing prerequisite: $tool"
+    done
+    info=$(podman info --format json)
+    jq -e '.host.security.rootless == true' <<< "$info" >/dev/null ||
+        steam_die 'Podman is not rootless.'
+    host=$(jq -er .host.arch <<< "$info")
+    if [[ "$mode" == build && "$TARGET" == v3arm64 ]]; then
+        for build_arch in amd64 arm64; do
+            [[ "$host" == "$build_arch" ]] || require_handler "$build_arch"
+        done
+    elif [[ "$mode" != management ]]; then
+        [[ "$host" == "$ARCH" ]] || require_handler "$ARCH"
+        # Modded installers run in an explicit amd64 stage even for ARM images.
+        if [[ "$mode" == build && "$MODDED" == 1 && "$host" != amd64 ]]; then
+            require_handler amd64
+        fi
+    fi
+    printf 'Rootless Podman: host %s, target %s.\n' "$host" "$ARCH"
+}
+
+verify_runtime_image() {
+    if [[ "$TARGET" == v3arm64 ]]; then
+        podman manifest exists "$IMAGE" ||
+            steam_die 'Missing local multiarchitecture manifest; build v3arm64 first.'
+        podman manifest inspect "$IMAGE" | jq -e --arg arch "$ARCH" \
+            'any(.manifests[]; .platform.os == "linux" and .platform.architecture == $arch)' >/dev/null ||
+            steam_die "Local manifest does not contain linux/$ARCH."
+    else
+        [[ "$(podman image inspect --format '{{.Architecture}}' "$IMAGE")" == "$ARCH" ]] ||
+            steam_die 'Cached image architecture mismatch.'
+    fi
+}
+
+read_private_env() {
+    local path=$1 line key value permissions
+    [[ -f "$path" && ! -L "$path" ]] || steam_die 'Use --env-file with a private regular file.'
+    [[ "$(stat -c %u "$path")" == "$EUID" ]] || steam_die 'Runtime env file must belong to you.'
+    permissions=$(stat -c %a "$path")
+    (( (8#$permissions & 077) == 0 )) || steam_die 'Runtime env file must have mode 600 or stricter.'
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" && "$line" != \#* ]] || continue
+        [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ && "$line" != *$'\r'* ]] ||
+            steam_die 'Runtime env file requires literal unquoted KEY=value lines.'
+        key=${BASH_REMATCH[1]}; value=${BASH_REMATCH[2]}
+        [[ "$key" != STEAM_* ]] || steam_die 'Never supply Steam account settings to a container.'
+        PRIVATE_ENV["$key"]=$value
+    done < "$path"
+}
+
+resolve_value() {
+    local key=$1 fallback=$2 required=$3 value status
+    if [[ -v "PRIVATE_ENV[$key]" ]]; then
+        value=${PRIVATE_ENV[$key]}
+    elif value=$(printenv "$key"); then
+        :
+    else
+        status=$?
+        [[ "$status" == 1 ]] || steam_die "Cannot read runtime setting: $key"
+        value=$fallback
+    fi
+    [[ "$required" != yes || -n "$value" ]] || steam_die "Required runtime setting missing: $key"
+    printf '%s' "$value"
+}
+
+compose_environment() {
+    local line active=no key expression source operator fallback
+    local assignment='^      - ([A-Z][A-Z0-9_]*)=(.*)$'
+    local substitution='^\$\{([A-Z][A-Z0-9_]*)(-|:\?)(.*)\}$'
+    SETTINGS=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == '    environment:' ]]; then active=yes; continue; fi
+        [[ "$active" == yes ]] || continue
+        [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ ^'    '[^[:space:]] ]] && break
+        [[ "$line" =~ $assignment ]] || steam_die 'Unsupported Compose environment syntax; update the reader.'
+        key=${BASH_REMATCH[1]}; expression=${BASH_REMATCH[2]}
+        if [[ "$expression" == "\${"* ]]; then
+            [[ "$expression" =~ $substitution ]] || steam_die "Unsupported substitution for $key."
+            source=${BASH_REMATCH[1]}; operator=${BASH_REMATCH[2]}; fallback=${BASH_REMATCH[3]}
+            if [[ "$operator" == ':?' ]]; then
+                SETTINGS["$key"]=$(resolve_value "$source" '' yes)
+            else
+                SETTINGS["$key"]=$(resolve_value "$source" "$fallback" no)
+            fi
+        else
+            SETTINGS["$key"]=$expression
+        fi
+    done < "$ROOT/$COMPOSE_DIRECTORY/docker-compose-steam.yml"
+    (( ${#SETTINGS[@]} > 0 )) || steam_die 'Compose environment contract is empty.'
+    for key in "${!PRIVATE_ENV[@]}"; do
+        if [[ -v "SETTINGS[$key]" ]]; then SETTINGS["$key"]=${PRIVATE_ENV[$key]}; fi
+    done
+}
+
+container_exists() {
+    local status
+    if podman container exists "$CONTAINER"; then return 0; else status=$?; fi
+    [[ "$status" == 1 ]] || steam_die 'Unable to query development container.'
+    return 1
+}
+
+require_owned() {
+    local owner
+    owner=$(podman inspect --format "{{index .Config.Labels \"$STARDEW_LABEL\"}}" "$CONTAINER")
+    [[ "$owner" == "$PROJECT" ]] || steam_die 'Refusing to operate on a container not owned by this helper.'
+}
+
+stop_container() {
+    if container_exists; then
+        require_owned
+        podman stop --time 20 "$CONTAINER" || return "$?"
+        podman rm "$CONTAINER"
+    fi
+}
+
+prepare_state() {
+    local base="$ROOT/.local/podman" path
+    [[ ! -L "$ROOT/.local" && ! -L "$base" ]] || steam_die 'Runtime state parents must not be symlinks.'
+    STATE="$base/$TARGET"
+    [[ ! -L "$STATE" ]] || steam_die 'Runtime state must not be a symlink.'
+    mkdir -p "$STATE"
+    for path in "$STATE/config" "$STATE/autoload.json"; do
+        [[ ! -L "$path" ]] || steam_die 'Runtime config paths must not be symlinks.'
+    done
+    mkdir -p "$STATE/config"
+    if [[ ! -e "$STATE/autoload.json" ]]; then
+        printf '%s\n' '{"LastFileLoaded":null,"LoadIntoMultiplayer":true,"ForgetLastFileOnTitle":true}' \
+            > "$STATE/autoload.json"
+    fi
+}
+
+wait_for_game() {
+    local elapsed=0 running process_pattern game=no browser=no logs=no mods=no
+    if [[ "$MODDED" == 1 ]]; then process_pattern='[S]tardewModdingAPI'; else process_pattern='[S]tardew Valley'; fi
+    while (( elapsed < STARTUP_TIMEOUT )); do
+        running=$(podman inspect --format '{{.State.Running}}' "$CONTAINER")
+        [[ "$running" == true ]] || steam_die 'Container exited before game readiness; inspect private logs.'
+        game=no; browser=no; logs=no; mods=no
+        if podman exec "$CONTAINER" pgrep -f "$process_pattern" >/dev/null 2>&1; then game=yes; fi
+        if curl --fail --silent --max-time 2 "http://127.0.0.1:$WEB_PORT/" >/dev/null; then browser=yes; fi
+        if [[ "$MODDED" == 0 ]]; then
+            logs=yes; mods=yes
+        elif podman exec "$CONTAINER" test /config/xdg/config/StardewValley/ErrorLogs/SMAPI-latest.txt \
+                -nt /config/.dev-launch-start >/dev/null 2>&1; then
+            logs=yes
+            if podman exec "$CONTAINER" grep -Eq \
+                    'INFO[[:space:]]+SMAPI\] Loaded [0-9]+ mods?:' \
+                    /config/xdg/config/StardewValley/ErrorLogs/SMAPI-latest.txt; then
+                mods=yes
+            fi
+        fi
+        if [[ "$game" == yes && "$browser" == yes && "$logs" == yes && "$mods" == yes ]]; then return; fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    steam_die "Startup timeout (game=$game browser=$browser fresh-smapi-log=$logs mods-loaded=$mods); desktop visibility alone is not readiness."
+}
