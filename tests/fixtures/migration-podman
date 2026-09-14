@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Synthetic migration-only Podman: no real containers or writes.
+set +x
+set -euo pipefail
+root=${MIGRATION_FIXTURE_ROOT:?}
+project=$(printf '%s' "$root" | sha256sum); project=${project:0:12}
+state=$(cat "$root/container.json")
+printf -v ident '%064d' 0; ident=${ident//0/7}
+ident=$(jq -r --arg fallback "$ident" '.id // $fallback' <<< "$state")
+old=stardew-dev-$project-v3arm64
+new=stardew-dev-$project-multiarch
+name=$old
+[[ $(jq -r '.new // false' <<< "$state") != true ]] || name=$new
+if [[ $# == 3 && $1 == info && $2 == --format && $3 == json ]]; then
+    jq -c '{host:{security:{rootless:(if has("rootless") then .rootless else true end)}}}' <<< "$state"
+elif [[ $# == 3 && $1 == container && $2 == exists && ( $3 == "$old" || $3 == "$new" ) ]]; then
+    [[ $(jq -r '.error // false' <<< "$state") != true ]] || exit 125
+    [[ $3 == "$name" && $(jq -r 'if has("exists") then .exists else true end' <<< "$state") == true ]]
+elif [[ $# == 2 && $1 == inspect && ( $2 == "$name" || $2 == "$ident" ) ]]; then
+    jq -c --arg project "$project" --arg id "$ident" --arg query "$2" '
+        [{Id:$id,Config:{Labels:{"io.stardew.local-project":(if .owned == false then "other" else $project end)}},
+        State:{Status:(.status // "exited"),Running:(.status == "running"),Paused:(.status == "paused"),
+        Restarting:(.restarting // false)},
+        Changed:(.identity_change == true and $query == $id)}]' <<< "$state"
+else
+    exit 97
+fi

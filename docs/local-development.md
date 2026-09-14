@@ -2,8 +2,10 @@
 
 Steam images consume **extracted vanilla files in `src/steam`**. No Steam login,
 SteamCMD bootstrap, or game download occurs during an image build or container
-startup. Acquisition is a separate, explicit host operation. GOG still uses
-its existing `docker/game_data` route and existing Compose files.
+startup. Acquisition is a separate, explicit host operation. `multiarch` is
+the only supported project: modded Steam with the inherited jlesage GUI.
+GOG, the vanilla project, the custom x11vnc variant, and old helper target
+names are intentionally retired, without compatibility aliases.
 
 The helper does not install host packages, invoke Steam acquisition for you, or
 require a Compose provider. It uses Bash, `jq`, GNU coreutils, `find`, `flock`,
@@ -48,11 +50,10 @@ print `aarch64`. This proves emulated userspace works, **not that Stardew works*
 The observed local host passed this probe after operator installation.
 
 QEMU executes ARM64 container userspace on the x86 host. Box64 inside the
-experimental image executes the x86_64 game. These are different layers. The
+ARM64 image executes the x86_64 game. These are different layers. The
 SMAPI installer runs in an explicitly amd64 build stage, using its bundled
 runtime; no ARM64 SDK is installed into an x86 image. A native ARM build host
-also needs amd64 emulation for this installer stage. The vanilla target's
-validation stage instead follows the build host.
+also needs amd64 emulation for this installer stage.
 
 ## 2. Acquire your game explicitly
 
@@ -123,26 +124,24 @@ Raw engine/Compose invocations validate their copied payload but cannot
 automatically coordinate with host refresh; do not refresh concurrently with
 an unmanaged build.
 
-## 3. Select and build a target
+## 3. Build the single project
 
-| Target | Platform | Intended contents |
+| Project | Runtime platform | Intended contents |
 |---|---|---|
-| `v3x86` | linux/amd64 | Existing SMAPI/mod set, inherited GUI |
-| `v3arm-amd64` | linux/amd64 | Vanilla game; preserves the original selected experiment |
-| `v4x86-x11vnc` | linux/amd64 | SMAPI/mods, custom Xvfb/x11vnc |
-| `v3arm64` | linux/amd64 + linux/arm64 | One local manifest: SMAPI/mods, native amd64 or Box64 on arm64 |
+| `multiarch` | linux/amd64 | SMAPI/mods, inherited GUI, native x86-64 apphost |
+| `multiarch` | linux/arm64 (default) | Same SMAPI/mods and GUI, x86-64 apphost through Box64 |
 
 ```bash
-./scripts/podman-steam.sh doctor v3x86
-./scripts/podman-steam.sh build v3x86
-./scripts/podman-steam.sh build all
+./scripts/podman-steam.sh doctor multiarch
+./scripts/podman-steam.sh build multiarch
+./scripts/podman-steam.sh build multiarch --no-cache  # optional fresh image layers
 ```
 
 These commands work from other directories too when invoked using their path.
 A missing/corrupt cache fails before invoking a build, with acquisition
 instructions. Dockerfiles independently validate cache contents.
 
-`build v3arm64` uses `podman buildx build --platform linux/amd64,linux/arm64`
+`build multiarch` always uses `podman buildx build --platform linux/amd64,linux/arm64`
 and `--manifest` to build both architectures from its local Dockerfile. Podman's
 buildx command is its build-command compatibility alias, not Docker's buildx
 builder service. The helper builds a fresh candidate manifest, verifies exactly
@@ -151,20 +150,23 @@ Failed builds do not replace the previous final image/manifest. Nothing is pushe
 Build/doctor preflight requires emulation for whichever build architecture is
 foreign to the host, including the amd64 installer on an ARM host.
 
-Each project owns its `docker/` build context and Dockerfile. Named contexts
-provide the published vanilla cache (`steam`) and common Bash helpers
-(`devtools`). Every modded Steam target references the repository-root `mods/`
-directory through the named `mods` context. Edit that shared copy for Steam
-mod changes; the old per-project copies remain untouched for GOG. The vanilla
-target does not consume mods.
-No project builds from the repository root, duplicates the game, or depends on
-Docker following an out-of-context symlink.
+Build-only `--no-cache` bypasses image-layer reuse, never `src/steam`; it does
+not refresh/download the game, prune storage, or change the selected base.
+The generic `all` shortcut selects the sole project, not both runtime platforms.
+Removed target names fail before state creation, builds, or container operations,
+instead of redirecting to `multiarch`.
 
-The Dockerfiles copy vanilla game/SDK files before applying variant-specific
+`multiarch/docker/` owns the build context and `Dockerfile-steam`. Named
+contexts provide the published vanilla cache (`steam=src/steam`), common Bash
+helpers (`devtools=scripts`), and shared mods (`mods=mods`). Edit repository-root
+`mods/` for mod changes. Consolidation leaves those shared mods and the local
+Steam cache unchanged. The build does not use the repository root as its main
+context, duplicate the game, or depend on out-of-context symlink traversal.
+
+The Dockerfile copies vanilla game/SDK files before applying
 mods and the common Steam launcher. Host cache contents never become a writable
 game mount. Editing a launcher or a mod template does not trigger Steam
-acquisition. Per-Dockerfile ignore files exclude GOG installers and unrelated
-local files without changing GOG contexts.
+acquisition. The Dockerfile's ignore file excludes unrelated local inputs.
 
 Base images, APT packages, SMAPI releases, and emulator packages can still
 require network access. This is **Steam/game-download-free building**, not a
@@ -173,15 +175,15 @@ fully offline or fully reproducible build. SMAPI remains version-selected by
 artifacts must exist. Compatibility with a newly acquired game needs real
 validation rather than inferring success from an installer exit code.
 
-All Steam runtime stages select
+The runtime stage selects
 `docker.io/jlesage/baseimage-gui:debian-12-v4.13.2`, an explicitly approved
-change after Debian 11 security-package URLs failed during real builds. GOG is
-unchanged. This also includes the post-v4.8.0 GLX work, but does not by itself
+change after Debian 11 security-package URLs failed during real builds.
+This also includes the post-v4.8.0 GLX work, but does not by itself
 establish game compatibility.
 
 Runtime stages declare their architecture explicitly so an amd64 installer
 stage cannot select the runtime's base architecture implicitly. The dual-platform
-v3arm64 stage uses the build's `TARGETPLATFORM` and checks `TARGETARCH` against
+multiarch stage uses the build's `TARGETPLATFORM` and checks `TARGETARCH` against
 the actual package architecture. Package
 installation uses jlesage's own temporary account initialization/cleanup helpers
 and a CA bundle from the validated Debian stage; APT signatures and checksums
@@ -202,11 +204,10 @@ are explicit, but package versions are not pinned.
 
 ### Compose compatibility
 
-The existing Steam Compose files retain local `docker` build contexts with
-named `additional_contexts` and explicit amd64 service platforms.
-`v3arm64/docker-compose-steam.yml` selects the dual-platform project with its own build
-context and save/config paths. Its Compose file is standalone, with its own
-environment and port settings; it no longer extends the v3x86 service.
+`multiarch/docker-compose-steam.yml` retains its local `docker` build context
+and named `additional_contexts`, with its own save/config paths. It is standalone,
+with its own environment and port settings, and extends no other service.
+Its container name is `stardew-multiarch`.
 Its build lists both platforms; `STARDEW_PLATFORM` selects the runtime platform
 (default `linux/arm64`). This Compose setting does not override the helper's
 explicit `--platform` argument.
@@ -218,9 +219,6 @@ The Podman helper reads the existing flat Compose environment list without
 executing it as shell code. This keeps defaults and the host aliases
 `ENABLE_AUTOLOADGAME`/`ENABLE_UNLIMITEDPLAYERS` consistent. Unsupported YAML or
 interpolation syntax fails explicitly; it is not a general YAML parser.
-
-Keep GOG Compose usage unchanged. Do not use GOG files as local Steam cache
-inputs.
 
 ## 4. Run in isolated development state
 
@@ -246,26 +244,47 @@ authentication may only use the first eight password characters. Keep GUI
 access on loopback or inside an SSH tunnel; do not treat VNC passwords as TLS.
 Private env values override host values. Steam account variables are rejected
 and secret values are not printed. Private files must belong to the invoking
-user and have mode 600 or stricter.
+user and have mode 600 or stricter; symlinked parents and hardlinked env files
+are rejected.
 
 ```bash
-./scripts/podman-steam.sh run v3x86 --env-file .local/runtime.local.env
-./scripts/podman-steam.sh logs v3x86
-./scripts/podman-steam.sh stop v3x86
+./scripts/podman-steam.sh run multiarch --platform linux/arm64 --env-file .local/runtime.local.env --timeout 600
+./scripts/podman-steam.sh logs multiarch
+./scripts/podman-steam.sh stop multiarch
+./scripts/podman-steam.sh run multiarch --platform linux/amd64 --env-file .local/runtime.local.env
 ```
 
-For `v3arm64`, `run` and `smoke` default to `linux/arm64`. Use
+For `multiarch`, `run` and `smoke` default to `linux/arm64`. Use
 `--platform linux/amd64` to run the native x86-64 member of the same manifest.
 Stop the target before switching: both platforms share its name and isolated
 development state. The build always includes both platforms; `--platform` is
-not a build filter. `smoke all` retains the ARM64 default for this target; test
-its amd64 member separately when that variant changes.
+not a build filter. `smoke all` retains the ARM64 default; it is not a
+both-platform runtime test. `run all` remains rejected.
 
 `run` uses an already-built local image (`--pull=never`), a project-specific
-name/label, and persistent isolated state under `.local/podman/TARGET/`.
-It does not use or overwrite the tracked AutoLoad file or existing version
-directory saves. Modded targets receive an initial correctly typed AutoLoad
-configuration and persist it separately.
+name/label, and persistent normal state under `.local/podman/multiarch/`.
+It does not use or overwrite the tracked AutoLoad file or silently migrate
+legacy saves. An initial correctly typed AutoLoad configuration persists
+separately. Normal startup uses a shared lock on
+`.local/podman/.multiarch-migration.lock` through state creation and Podman
+start, releasing it before readiness checks; migration requires the exclusive
+lock on that same path so publication cannot race startup. The lock must be
+an owned private regular file with a single link; state directories must be
+private (mode 700). Migration must lock that same file/inode exclusively and
+never unlink it. Explicit disposable-state runs do not take the migration lock.
+
+`run` and `smoke` alone accept `--state-root DIR`. The default root is
+`.local/podman` (the helper appends `multiarch`). An explicit root must be a
+canonical, safe descendant of this repository's `.local/validation`, expressed
+as a repository-relative or absolute path. Ancestors must be private, owned,
+and nonsymlinked. Reusing an existing overridden `multiarch` state directory
+requires the helper's matching `.disposable-state` sentinel; copied or migrated
+state without that marker is refused. Do not fabricate the marker to bypass
+this protection. The override isolates data, not container
+identity or ports: runs must still be sequential. Lifecycle tests allocate
+their own private disposable root there and must never use migrated user saves.
+The validation root itself, dot-path forms, symlinks, and legacy/migrated state
+components are rejected.
 
 Default endpoints:
 
@@ -285,25 +304,211 @@ ssh -N -o ExitOnForwardFailure=yes \
 
 Then use local browser port 15801 or native VNC port 15902.
 
-Local helper/custom x11vnc mode deliberately rejects secure/web-auth mode
+The local helper deliberately rejects secure/web-auth mode
 requests rather than pretending those separate proxy/auth configurations work.
-The custom service requires a password file and never falls back to `-nopw`.
 
-The common Steam launcher handles absent vanilla mods, validates generated JSON,
+The common Steam launcher validates generated JSON,
 and starts the selected executable directly. Disabled mods move to
 `DisabledMods` so they can be restored on a later start; existing nonempty
 configuration remains authoritative. Game exit/signal behavior no longer
-depends on an indefinite post-game sleep. GOG launchers/helpers are unchanged.
+depends on an indefinite post-game sleep.
 It creates the XDG config/data/cache directories under `/config` before launch.
 Without an existing config directory, SMAPI fell back to a relative
 `StardewValley/ErrorLogs` path which collided with the game's wrapper file.
 
-## 5. Validation, failures, and limitations
+## 5. Explicit migration and validation-gated retirement
 
-**Completion requires automated checks only:** the four-target cache/build,
+Migration is implemented in Bash/jq with explicit inspection, execution, and
+verification modes. Ordinary helper commands never migrate, overwrite, or
+delete legacy state automatically.
+
+```bash
+./scripts/migrate-multiarch-state.sh --dry-run
+./scripts/migrate-multiarch-state.sh --execute
+./scripts/migrate-multiarch-state.sh --verify .local/migrations/v3arm64-RUN/receipt.json
+```
+
+Replace `v3arm64-RUN` with the actual private receipt directory printed by
+migration. Execute only once, with an absent destination; do not rerun migration
+to verify an existing copy. `--verify` requires the original source and compares
+it, the independent backup, and the destination against the recorded inventory.
+It checks historical container evidence, not whether containers are currently
+running; cleanup must perform its own current resource checks.
+
+The local migration completed on September 14, 2026: all 138 inventory entries
+matched across source, backup, and destination. The retained evidence directory
+is `.local/migrations/v3arm64-20260914T035009Z-186622a5a62b5dda998ab57a/`.
+Its inventory and receipt are private; do not publish their contents.
+
+Migration/retirement also require the capability-checked GNU copy/publication
+options and a `jq` build that preserves integer nanosecond timestamps. Unsupported
+tools fail before mutation; do not bypass these guards on an older host.
+
+The required sequence is:
+
+1. With old and new managed containers not running, inspect
+   `.local/podman/v3arm64`. Refuse unsafe/symlinked paths, unexpected ownership,
+   missing source, or an existing `.local/podman/multiarch` destination.
+   Coordinate with normal startup through a scoped migration lock; do not
+   stop workloads automatically or use a privileged fallback.
+2. Copy the source to a unique private backup beneath `.local/migrations`,
+   without following external symlinks. Verify file/type/mode/content
+   inventories, then stage and verify a copy from that backup before
+   fail-if-exists publication to `.local/podman/multiarch`. Preserve ownership
+   and private contents without printing credentials, logs, config, or saves.
+   Keep the source in place and retain the independent verified backup.
+3. Pass synthetic migration tests, the renamed project's initial build, and
+   both-platform smoke/lifecycle validation using disposable state. Verify
+   source, backup, and destination without loading a user's saved world.
+   Failure blocks cleanup; retain legacy resources and source state.
+4. Only after explicit successful evidence, re-inventory this workspace's
+   allowlisted legacy containers/images. Validate ownership and immutable
+   container IDs before bounded removal. Handle manifests and their members
+   explicitly; retain shared members and the validated `multiarch` manifest.
+   Reverify the backup and unchanged source before deleting only the exact
+   `.local/podman/v3arm64` source. Changed source data requires reconciliation,
+   not deletion. Record private nonsecret cleanup evidence and verify removals.
+5. After cleanup, rebuild with fresh image layers:
+
+   ```bash
+   ./scripts/podman-steam.sh build multiarch --no-cache
+   ```
+
+   Verify exactly amd64 and arm64 manifest members and revalidate both runtime
+   architectures, native/Box64 dispatch, smoke, and lifecycle behavior in
+   disposable state. Recheck the retained backup, migrated state and cache.
+   A failed build must retain the prior validated manifest and data; it is
+   not completed consolidation.
+6. Review/update `.github/skills/stardew-podman/SKILL.md` **last**, against the
+   implemented interfaces and successful final evidence.
+
+Never broadly prune storage. Keep the verified backup, migrated state, other
+legacy state directories, root `mods/`, `src/steam`, private runtime env file,
+unrelated resources, and shared image members. Cleanup is not authorization
+to delete any of those.
+
+### Recorded legacy retirement
+
+After the pre-cleanup gate passed, the explicit retirement commands were:
+
+```bash
+./scripts/cleanup-legacy-state.sh --dry-run
+./scripts/cleanup-legacy-state.sh --execute
+```
+
+This is bounded migration tooling, not an ordinary build/run prerequisite.
+It requires `.local/validation/consolidate-final-gate/gate.json`, verifies its
+private evidence checksums and exact pre-cleanup manifest, and uses a durable
+private journal for partial retries. Do not fabricate or edit gate evidence,
+or replay retirement during normal development. A later no-cache build changes
+the image being verified; the old gate remains historical evidence.
+
+Retirement removed the original `.local/podman/v3arm64`, the stopped owned
+legacy container, and all four allowlisted legacy image references. The old
+manifest index was removed without deleting the two members shared with
+`multiarch`. The three ordinary legacy images were **untagged, not deleted**:
+their underlying objects were intentionally retained because complete reference
+safety was unproven. No global prune or forced image deletion was performed.
+Other legacy state directories, the independent backup, migrated state, cache,
+shared mods, and private runtime settings were preserved.
+
+The migration evidence directory contains `cleanup/journal.json` and
+`cleanup/receipt.json`. The private post-check is
+`.local/validation/consolidate-cleanup-20260914-1/postcheck.json`.
+After retirement, use the separate retained-state verifier:
+
+```bash
+migration=.local/migrations/v3arm64-20260914T035009Z-186622a5a62b5dda998ab57a
+./scripts/migrate-multiarch-state.sh --verify-retained \
+  "$migration/receipt.json" "$migration/cleanup/receipt.json"
+```
+
+It requires completed cleanup evidence and an absent original source, then
+compares the backup and destination with the original private inventory.
+All 138 entries passed. It explicitly does **not** claim source stability after
+deletion; ordinary `--verify` correctly refuses then. Absolute, repository-relative,
+and mixed receipt paths are supported, while unsafe/noncanonical paths fail.
+This check compares the migrated snapshot: intentionally playing or editing
+the normal state later will require reconciliation, not deletion of new data.
+
+For rollback, stop the new managed instance explicitly and preserve any new
+state separately before considering restoration. Verify the retained source
+(before cleanup) or independent backup, and restore only to an absent
+destination through an explicit reviewed recovery operation. Never overwrite
+new user changes or delete the backup. There is no automatic rollback command;
+a recovery operation requires separate review and authorization.
+
+## 6. Validation, failures, and limitations
+
+**Completion requires automated checks only:** the single-project/two-platform cache/build,
 startup/graphics/authentication contract, automated lifecycle coverage, relevant
-regressions, and project-owned cleanup. Interactive checks are optional human
-follow-up, not completion gates. Automated completion does not certify gameplay.
+regressions, verified migration, gated project-owned cleanup, and fresh-build
+revalidation. Final skill review follows those checks. Interactive checks are
+optional human follow-up, not completion gates. Automated completion does not
+certify gameplay.
+
+The current support matrix is the two `multiarch` platform rows in section 3.
+The renamed project's cached build and repeat build passed, producing exactly
+one amd64 and one arm64 member without leftover candidate aliases. Actual
+package-architecture/Box64 probes, disposable startup/GLX smoke tests, and
+both-platform lifecycle checks passed. The local pre-cleanup image report is
+`.local/validation/consolidate-image-gate-20260914-1/summary.txt`.
+
+The consolidated implementation also passed 41 development cases, architecture
+dispatch/exit fixtures, seven readiness cases, 28 synthetic migration cases,
+34 synthetic cleanup cases, lifecycle regressions (including both-platform selection, failures, and
+interruption), and three real context-only synthetic-cache checks. ShellCheck
+and diff whitespace checks passed. Migration was reverified after runtime tests;
+root mods, the Steam cache, and the historical audit remained unchanged.
+
+The private pre-cleanup gate at
+`.local/validation/consolidate-final-gate/gate.json` binds the migration receipt,
+pre-cleanup manifest, and successful evidence-log checksums. Legacy cleanup
+completed with retained-state verification. The subsequent no-cache acceptance
+also passed; historical results below were not used as a substitute.
+
+### Final post-cleanup acceptance: September 14, 2026
+
+The real `build multiarch --no-cache` completed successfully in 225 seconds
+using the existing local Steam files. Exactly two fresh manifest members were
+published, with changed member digests and no candidate aliases. The full
+manifest remained unchanged throughout runtime validation.
+
+| Runtime platform | Actual dispatch | Startup/mods/GLX | Isolated lifecycle |
+|---|---|---|---|
+| linux/amd64 | Native apphost; Box64 absent | Passed | Passed |
+| linux/arm64 | x86-64 apphost through Box64, ARM userspace under host QEMU | Passed | Passed |
+
+Each lifecycle case preserved the exact marker and host ownership, propagated
+TERM as 143 and KILL as 137, rejected dead readiness, and cleaned only its owned
+resources. All eight probe/smoke/lifecycle container IDs were confirmed absent.
+Test markers and staged env files were removed. No migrated user state or real
+save was used as a test fixture.
+
+Retained-state verification passed before the build, after publication, and
+after runtime validation. The backup and destination still match all 138
+recorded entries. The cache, shared mods, historical audit, private settings,
+other legacy state, and historical receipt bytes remained unchanged. Legacy
+references, the old container, and the original state remain absent.
+
+Private evidence is in `.local/validation/consolidate-fresh-20260914-1/`:
+`summary.txt`, `results.json`, and the before/after manifest records. Lifecycle
+evidence is `.local/validation/lifecycle-20260914T052055Z-4193463-8775/`.
+The verified fresh index storage ID is
+`sha256:d0024126d1d08d3c56e35dd87c6a5d46894812cdcef112095a932ee0cf7d9191`;
+exact platform/member digests are in `results.json`.
+
+**Podman reporting caveat:** image-listing digest metadata stayed at the previous
+index value despite a new storage ID and new members. That value is not claimed
+as the current index digest. Use the inspected full manifest, exact member
+digests, and storage ID together; host-default image inspection can resolve only
+the amd64 member. A hash of formatted inspection JSON is evidence integrity,
+not automatically the registry/OCI digest.
+
+Fresh acceptance did not repeat VNC authentication testing; the transport/auth
+results below remain clearly historical. It does not certify interactive GUI
+controls, gameplay, multiplayer, world hosting, native ARM hardware, emulated
+gameplay performance, or game-save correctness.
 
 Fast Bash-only regression suite (synthetic fixtures, no game downloads):
 
@@ -312,6 +517,8 @@ bash tests/development.sh
 bash tests/architecture.sh
 bash tests/readiness.sh
 bash tests/fixtures/lifecycle-regressions.sh
+bash tests/migration.sh
+bash tests/cleanup.sh
 ```
 
 It covers validation, symlinks/modes, publication/recovery, explicit acquisition
@@ -320,23 +527,23 @@ Compose defaults, Podman arguments, ownership, private env handling, and rejecti
 of stale/early SMAPI logs as readiness evidence.
 
 `bash tests/container-context.sh` additionally builds only the validation
-stages with synthetic data and checks per-project context exclusions. It may
+stages with synthetic data and checks the surviving project's context exclusions. It may
 pull the validation-stage base image and install its Bash/jq packages, but
 does not download or execute the game.
 
 Bounded container startup and graphics probe:
 
 ```bash
-./scripts/podman-steam.sh smoke v3x86 --env-file .local/runtime.local.env --timeout 180
-./scripts/podman-steam.sh smoke all --env-file .local/runtime.local.env --timeout 600
+./scripts/podman-steam.sh smoke multiarch --platform linux/amd64 --state-root .local/validation/manual-amd64 --env-file .local/runtime.local.env --timeout 180
+./scripts/podman-steam.sh smoke multiarch --platform linux/arm64 --state-root .local/validation/manual-arm64 --env-file .local/runtime.local.env --timeout 600
 ```
 
-All-target commands execute sequentially and fail if any target fails or is
-blocked. `run all` is rejected; interactive concurrent runs need explicit
-per-target port choices.
+Use fresh private validation roots for repeat runs; never point tests at normal
+or migrated user state. These explicit platform runs are sequential and fail
+if startup is blocked. `all` in the helper is only a project shortcut.
 
 Readiness requires a game process, browser response, and a fresh SMAPI log
-reporting completed mod loading for modded targets. `smoke` additionally runs
+reporting completed mod loading. `smoke` additionally runs
 `glxinfo -B`, then removes its own container. The default startup bound is 180
 seconds; use `--timeout 600` for ARM64 under QEMU, whose observed startup exceeded
 that default. Readiness does not prove authenticated interactive access, world
@@ -349,7 +556,43 @@ Failures retain private diagnostics in the target's attempt directory. A failed
 The helper refuses to stop containers without the matching project label.
 Logs can contain player/save identifiers; do not publish them unredacted.
 
-### Passed automated evidence: September 14, 2026
+### Automated lifecycle coverage
+
+Run the repeatable cached-image integration matrix with private runtime settings:
+
+```bash
+bash tests/runtime-lifecycle.sh all --platform all --env-file .local/runtime.local.env --timeout 600
+```
+
+The project argument accepts `all` or `multiarch`. The platform argument accepts
+`all`, `linux/amd64`, or `linux/arm64`, and defaults to `all`: unlike helper
+`smoke all`, the lifecycle default exercises both platforms sequentially.
+Select one platform to narrow debugging, not to claim both-platform acceptance.
+
+Existing containers are refused; the runner never adopts unrelated containers,
+downloads the game, or rebuilds images. It allocates a unique private disposable
+state root under its `.local/validation` evidence directory and passes that
+root to the helper. It must never copy, fabricate, load, or modify user saves
+as test fixtures. A unique config marker tests volume persistence, not actual
+game-save correctness.
+
+The runner uses a project lock and immutable container IDs for scoped cleanup.
+The helper's `--cid-file FILE` option supplies that ID receipt; the file must not
+already exist and its parent must be an existing private descendant directory
+under `.local/validation`. Podman removes this file when the container is removed;
+it is not a durable receipt. The runner retains cleanup logs as evidence and
+verifies exact container IDs, rather than treating a missing CID file as proof
+of cleanup. Only test-owned markers/resources are cleaned. The consolidated
+cached-image matrix passed both architectures: exact marker recreation and
+host ownership, TERM exit 143, KILL exit 137, dead-readiness rejection, and
+scoped cleanup. Its private evidence is
+`.local/validation/lifecycle-20260914T035848Z-1247622-181/`.
+
+### Historical automated evidence: September 14, 2026, before consolidation
+
+**Historical only:** the following records the previous project layout and
+target names, not runnable instructions or the current support matrix. Preserve
+the [historical audit](stardew-container-audit-2026-09-13.md) as written.
 
 The operator-acquired cache identifies Steam build `16826371`; the game reports
 Stardew Valley `1.6.15` build `24356`. Modded images use SMAPI `4.0.8`. All four
@@ -411,20 +654,7 @@ actual package architectures and native/Box64 installation choices were checked
 inside the running userspace, not inferred from a manifest's host-default
 `podman image inspect` result.
 
-### Automated lifecycle coverage
-
-Run the repeatable cached-image integration matrix with private runtime settings:
-
-```bash
-bash tests/runtime-lifecycle.sh all --env-file .local/runtime.local.env --timeout 600
-```
-
-Replace `all` with one target to narrow the run. Existing containers are refused;
-the runner never adopts unrelated containers, downloads the game or rebuilds
-images. It uses a project lock and immutable container IDs for scoped cleanup.
-The helper's `--cid-file FILE` option supplies that ID receipt; the path must not
-already exist. Podman may remove its receipt when the container is removed, so
-the runner retains cleanup logs as evidence.
+#### Historical lifecycle results
 
 | Target | Config recreation/ownership | SIGTERM exit | SIGKILL exit | Dead readiness/cleanup |
 |---|---|---|---|---|
@@ -433,17 +663,17 @@ the runner retains cleanup logs as evidence.
 | `v4x86-x11vnc` | Passed | 143 | 137 | Passed |
 | `v3arm64` | Passed under QEMU/Box64 | 143 | 137 | Passed |
 
-The final matrix exited 0 with four targets and zero failures. Private evidence
+The pre-consolidation matrix exited 0 with four targets and zero failures. Private evidence
 is recorded in `.local/validation/lifecycle-all.log` and the corresponding
 `lifecycle-*/` directory. Thirteen focused lifecycle regressions cover conflicts,
 failed creation/startup, owner changes, stale process identity, failed waits,
 false readiness, failed cleanup and interruption. Clean/nonzero apphost exit
 fixtures also passed; no menu-driven exit is required.
 
-Lifecycle tests use disposable development runs and a unique config-volume
-marker, not fabricated or modified game saves. Marker persistence is not actual
-game-save correctness. The automated acceptance matrix is complete; no human
-gameplay testing is required to close this local-development task.
+Those lifecycle tests used development runs and a unique config-volume marker,
+not fabricated or modified game saves. Marker persistence was not actual
+game-save correctness. That earlier acceptance matrix was complete, but is not
+evidence for the renamed project's new migration or disposable-state guarantees.
 
 ### Optional, unverified human follow-up
 

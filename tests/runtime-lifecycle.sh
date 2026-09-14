@@ -8,19 +8,30 @@ source "$ROOT/scripts/lib/steam-cache.sh"
 source "$ROOT/scripts/lib/podman-steam.sh"
 
 usage() {
-    printf '%s\n' 'Usage: tests/runtime-lifecycle.sh all|TARGET --env-file FILE [--timeout 600]' \
+    printf '%s\n' 'Usage: tests/runtime-lifecycle.sh all|multiarch --env-file FILE [--timeout 600]' \
+        '       [--platform all|linux/amd64|linux/arm64] (default all, sequential)' \
         'Runs sequential cached-image marker recreation, exact game-PID TERM/KILL and owned cleanup.' \
         'Private evidence: .local/validation/lifecycle-*/; no authentication or gameplay certification.'
 }
 [[ "${1:-}" != --help ]] || { usage; exit 0; }
 [[ $# -ge 3 ]] || { usage >&2; exit 2; }
 requested=$1; shift
-ENV_FILE='' STARTUP_TIMEOUT=600
+ENV_FILE='' STARTUP_TIMEOUT=600 RUNTIME_PLATFORM='' platforms=(linux/amd64 linux/arm64)
+if [[ "$requested" == all ]]; then targets=("${STEAM_TARGETS[@]}"); else
+    select_target "$requested"
+    targets=("$TARGET")
+fi
 while (( $# )); do
     [[ $# -ge 2 ]] || steam_die "Missing value for $1"
     case "$1" in
         --env-file) ENV_FILE=$2 ;;
         --timeout) STARTUP_TIMEOUT=$2 ;;
+        --platform)
+            case "$2" in
+                all) platforms=(linux/amd64 linux/arm64) ;;
+                linux/amd64|linux/arm64) platforms=("$2") ;;
+                *) steam_die 'Supported lifecycle platforms: all, linux/amd64, linux/arm64.' ;;
+            esac ;;
         *) steam_die "Unknown option: $1" ;;
     esac
     shift 2
@@ -30,12 +41,26 @@ done
 for tool in podman jq timeout flock stat cmp; do
     command -v "$tool" >/dev/null || steam_die "Missing prerequisite: $tool"
 done
-if [[ "$requested" == all ]]; then targets=("${STEAM_TARGETS[@]}"); else
-    select_target "$requested"
-    targets=("$TARGET")
-fi
-[[ ! -L "$ROOT/.local" && ! -L "$ROOT/.local/validation" ]] || steam_die 'Evidence parents must not be symlinks.'
+declare -A PRIVATE_ENV=()
+read_private_env "$ENV_FILE"
+safe_path "$ENV_FILE"
+ENV_FILE=$SAFE_PATH
+unset PRIVATE_ENV
+for target in "${targets[@]}"; do
+    select_target "$target"
+    container_exists && steam_die 'Conflicting container exists; lifecycle will not adopt or stop it.'
+done
+safe_path "$ROOT/.local/validation"
+private_directory "$ROOT/.local"
+private_directory "$ROOT/.local/validation"
 mkdir -p "$ROOT/.local/validation"
+safe_path "$ROOT/.local/validation/lifecycle.lock"
+if [[ -e "$SAFE_PATH" ]]; then
+    [[ -f "$SAFE_PATH" && "$(stat -c %u:%h "$SAFE_PATH")" == "$EUID:1" ]] ||
+        steam_die 'Lifecycle lock must be an owned regular file without hard links.'
+    permissions=$(stat -c %a "$SAFE_PATH")
+    (( (8#$permissions & 077) == 0 )) || steam_die 'Lifecycle lock must be private.'
+fi
 exec {lock_fd}>"$ROOT/.local/validation/lifecycle.lock"
 flock -n "$lock_fd" || steam_die 'Another lifecycle runner holds the project lock.'
 run_id="lifecycle-$(date -u +%Y%m%dT%H%M%SZ)-$BASHPID-$RANDOM"
@@ -49,9 +74,12 @@ podman() { timeout --kill-after=5 45 "$PODMAN" "$@"; }
 
 run_target() {
     set -euo pipefail
+    RUNTIME_PLATFORM=$2
     select_target "$1"
-    local_dir="$evidence/$TARGET"
+    local_dir="$evidence/$TARGET/$ARCH"
+    mkdir -p "$evidence/$TARGET"
     mkdir -m 700 "$local_dir"
+    STATE_ROOT="$local_dir/state"
     receipt='' marker='' marker_path='' container_id=''
     # Invoked by the target subprocess's EXIT trap, including failure paths.
     # shellcheck disable=SC2317
@@ -59,7 +87,7 @@ run_target() {
         status=$?
         set +e
         trap - EXIT INT TERM
-        if [[ -n "$receipt" && -s "$receipt" ]]; then
+        if [[ -n "$receipt" && ! -L "$receipt" && -f "$receipt" && -s "$receipt" ]]; then
             container_id=$(cat "$receipt") || status=1
             if [[ "$container_id" =~ ^[a-f0-9]{64}$ ]]; then
                 CONTAINER=$container_id
@@ -76,6 +104,9 @@ run_target() {
                 printf 'Invalid receipt; refusing container cleanup.\n' >&2
                 status=1
             fi
+        elif [[ -n "$receipt" && ( -e "$receipt" || -L "$receipt" ) ]]; then
+            printf 'Unsafe receipt; refusing container cleanup.\n' >&2
+            status=1
         fi
         if [[ -n "$marker_path" && -e "$marker_path" ]]; then
             if [[ ! -L "$marker_path" && -f "$marker_path" ]] && cmp -s "$local_dir/expected" "$marker_path"; then
@@ -94,16 +125,18 @@ run_target() {
     podman_doctor runtime
     container_exists && steam_die 'Conflicting container exists; lifecycle will not adopt or stop it.'
     verify_runtime_image
-    marker=".${run_id}-${TARGET}.marker"
-    marker_path="$ROOT/.local/podman/$TARGET/config/$marker"
+    marker=".${run_id}-${TARGET}-${ARCH}.marker"
+    marker_path="$STATE_ROOT/$TARGET/config/$marker"
     [[ ! -e "$marker_path" && ! -L "$marker_path" ]] || steam_die 'Marker path already exists.'
-    printf '%s\n' "$run_id:$TARGET:application-owned persistence" > "$local_dir/expected"
+    printf '%s\n' "$run_id:$TARGET:$ARCH:application-owned persistence" > "$local_dir/expected"
     for signal in TERM KILL; do
         select_target "$1"
         receipt="$local_dir/$signal.cid"
         timeout --kill-after=15 "$((STARTUP_TIMEOUT + 90))" \
             bash "$ROOT/scripts/podman-steam.sh" run "$TARGET" --env-file "$ENV_FILE" \
+            --platform "$RUNTIME_PLATFORM" --state-root "$STATE_ROOT" \
             --timeout "$STARTUP_TIMEOUT" --cid-file "$receipt" > "$local_dir/$signal-startup.log" 2>&1
+        [[ ! -L "$receipt" && -f "$receipt" ]] || steam_die 'Unsafe created-container receipt.'
         container_id=$(cat "$receipt")
         [[ "$container_id" =~ ^[a-f0-9]{64}$ ]] || steam_die 'Invalid created-container ID.'
         CONTAINER=$container_id
@@ -162,21 +195,24 @@ interrupt() {
 trap 'interrupt 130' INT
 trap 'interrupt 143' TERM
 for target in "${targets[@]}"; do
+  for platform in "${platforms[@]}"; do
+    arch=${platform#linux/}
     status=0
     # Do not put run_target in an `if`: doing so disables errexit throughout it.
     set +e
-    run_target "$target" > "$evidence/$target.log" 2>&1 &
+    run_target "$target" "$platform" > "$evidence/$target-$arch.log" 2>&1 &
     child=$!
     wait "$child"
     status=$?
     child=''
     set -e
     if (( status == 0 )); then
-        printf 'PASS %s: recreation/host ownership, TERM=143, KILL=137, dead-readiness rejection, cleanup\n' "$target"
+        printf 'PASS %s %s: recreation/host ownership, TERM=143, KILL=137, dead-readiness rejection, cleanup\n' "$target" "$platform"
     else
-        printf 'FAIL/BLOCKED %s: exit %s; private evidence %s\n' "$target" "$status" "$evidence/$target" >&2
+        printf 'FAIL/BLOCKED %s %s: exit %s; private evidence %s\n' "$target" "$platform" "$status" "$evidence/$target/$arch" >&2
         failures=$((failures + 1))
     fi
+  done
 done
-printf '%s targets, %s failures\n' "${#targets[@]}" "$failures"
+printf '%s platform cases, %s failures\n' "$((${#targets[@]} * ${#platforms[@]}))" "$failures"
 (( failures == 0 ))

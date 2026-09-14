@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Fault injection for synthetic migration regressions only.
+set +x
+set -euo pipefail
+root=${MIGRATION_FIXTURE_ROOT:?}
+tool=${0##*/}
+fault=''
+[[ ! -f $root/fault ]] || IFS= read -r fault < "$root/fault"
+if [[ $tool == cp && $# -ge 2 ]]; then
+    destination=${*: -1}
+    source_path=${*: -2:1}
+    phase=backup
+    [[ $destination != *'/.multiarch-migration-stage-'* ]] || phase=stage
+    if [[ $fault == "$phase-fail" ]]; then
+        mkdir -- "$destination"
+        printf partial > "$destination/partial"
+        exit 1
+    fi
+    /usr/bin/cp "$@"
+    if [[ $fault == "$phase-corrupt" ]]; then printf 'synthetic corruption\n' > "$destination/private"; fi
+    if [[ $fault == source-change && $phase == backup ]]; then
+        printf 'synthetic external change\n' > "$source_path/private"
+    fi
+    if [[ $fault == containers-change && $phase == stage ]]; then
+        printf '{"status":"running"}\n' > "$root/container.json"
+    fi
+    if [[ $fault == signal-stage && $phase == stage ]]; then kill -TERM "$PPID"; fi
+elif [[ $tool == mv ]]; then
+    destination=${*: -1}
+    if [[ $destination == "$root/.local/podman/multiarch" && $fault == destination-conflict ]]; then
+        mkdir -- "$destination"
+    fi
+    if [[ $destination == */receipt.json && $fault == receipt-fail ]]; then exit 1; fi
+    /usr/bin/mv "$@"
+    if [[ $destination == "$root/.local/podman/multiarch" && $fault == signal-publish ]]; then
+        kill -TERM "$PPID"
+    fi
+else
+    exit 97
+fi

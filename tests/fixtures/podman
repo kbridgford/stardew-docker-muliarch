@@ -15,17 +15,32 @@ case "$1 $2" in
     'manifest create') printf '%064d\n' 1 ;;
     'manifest exists') exit "${MOCK_MANIFEST_MISSING:-0}" ;;
     'manifest inspect')
-        if [[ "${MOCK_MANIFEST_BAD:-0}" == 1 ]]; then
+        if [[ -n "${MOCK_MANIFEST_SHAPE:-}" ]]; then
+            case "$MOCK_MANIFEST_SHAPE" in
+                duplicate) printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"amd64"}}]}' ;;
+                extra) printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}},{"platform":{"os":"linux","architecture":"386"}}]}' ;;
+                wrong-os) printf '%s\n' '{"manifests":[{"platform":{"os":"windows","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}' ;;
+                malformed) printf '%s\n' '{"manifests":' ;;
+                *) exit 98 ;;
+            esac
+        elif [[ "${MOCK_MANIFEST_BAD:-0}" == 1 ]]; then
             printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}}]}'
         else
             printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"arm64"}},{"platform":{"os":"linux","architecture":"amd64"}}]}'
         fi ;;
-    'manifest rm'|'tag '*) ;;
+    'manifest rm') ;;
+    'tag '*) [[ "${MOCK_TAG_FAIL:-0}" == 0 ]] || exit 26 ;;
     'container exists')
         if [[ -e "$MOCK_PODMAN_CALLS.container" ]]; then exit 0; fi
         exit "${MOCK_CONTAINER_EXISTS:-1}" ;;
     'run --detach')
         [[ "${MOCK_RUN_FAIL:-0}" == 0 ]] || exit 25
+        if [[ -n "${MOCK_START_LOCK:-}" ]]; then
+            if flock -n -x "$MOCK_START_LOCK" -c true; then
+                echo 'Start did not hold its shared migration lock.' >&2
+                exit 24
+            fi
+        fi
         touch "$MOCK_PODMAN_CALLS.container"
         while (( $# )); do
             case "$1" in
@@ -37,6 +52,8 @@ case "$1 $2" in
     'inspect --format')
         if [[ "$3" == '{{.State.Running}}' ]]; then
             printf 'true\n'
+        elif [[ "$3" == '{{.Id}}' ]]; then
+            printf '%064d\n' 1
         else
             printf '%s\n' "${MOCK_OWNER:?}"
         fi ;;

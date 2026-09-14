@@ -3,20 +3,22 @@
 # shellcheck disable=SC2034
 
 STARDEW_LABEL=io.stardew.local-project
-STEAM_TARGETS=(v3x86 v3arm-amd64 v4x86-x11vnc v3arm64)
+STEAM_TARGETS=(multiarch)
 
 select_target() {
     TARGET=$1
     DOCKERFILE=Dockerfile-steam
-    ARCH=amd64
+    ARCH=arm64
     MODDED=1
     case "$TARGET" in
-        v3x86) DIRECTORY=v3x86; COMPOSE_DIRECTORY=v3x86 ;;
-        v3arm-amd64) DIRECTORY=v3arm; COMPOSE_DIRECTORY=v3arm; MODDED=0 ;;
-        v4x86-x11vnc) DIRECTORY=v4x86_x11vnc; COMPOSE_DIRECTORY=v4x86_x11vnc ;;
-        v3arm64)
-            DIRECTORY=v3arm64; COMPOSE_DIRECTORY=v3arm64; ARCH=arm64 ;;
+        multiarch) DIRECTORY=multiarch; COMPOSE_DIRECTORY=multiarch ;;
         *) steam_die "Unknown target: $TARGET" ;;
+    esac
+    case "${RUNTIME_PLATFORM:-}" in
+        '') ;;
+        linux/amd64) ARCH=amd64 ;;
+        linux/arm64) ARCH=arm64 ;;
+        *) steam_die 'Supported runtime platforms: linux/amd64, linux/arm64.' ;;
     esac
     local hash
     hash=$(printf '%s' "$ROOT" | sha256sum)
@@ -47,37 +49,31 @@ podman_doctor() {
     jq -e '.host.security.rootless == true' <<< "$info" >/dev/null ||
         steam_die 'Podman is not rootless.'
     host=$(jq -er .host.arch <<< "$info")
-    if [[ "$mode" == build && "$TARGET" == v3arm64 ]]; then
+    if [[ "$mode" == build ]]; then
         for build_arch in amd64 arm64; do
             [[ "$host" == "$build_arch" ]] || require_handler "$build_arch"
         done
     elif [[ "$mode" != management ]]; then
         [[ "$host" == "$ARCH" ]] || require_handler "$ARCH"
-        # Modded installers run in an explicit amd64 stage even for ARM images.
-        if [[ "$mode" == build && "$MODDED" == 1 && "$host" != amd64 ]]; then
-            require_handler amd64
-        fi
     fi
     printf 'Rootless Podman: host %s, target %s.\n' "$host" "$ARCH"
 }
 
 verify_runtime_image() {
-    if [[ "$TARGET" == v3arm64 ]]; then
-        podman manifest exists "$IMAGE" ||
-            steam_die 'Missing local multiarchitecture manifest; build v3arm64 first.'
-        podman manifest inspect "$IMAGE" | jq -e --arg arch "$ARCH" \
-            'any(.manifests[]; .platform.os == "linux" and .platform.architecture == $arch)' >/dev/null ||
-            steam_die "Local manifest does not contain linux/$ARCH."
-    else
-        [[ "$(podman image inspect --format '{{.Architecture}}' "$IMAGE")" == "$ARCH" ]] ||
-            steam_die 'Cached image architecture mismatch.'
-    fi
+    podman manifest exists "$IMAGE" ||
+        steam_die 'Missing local multiarchitecture manifest; build multiarch first.'
+    podman manifest inspect "$IMAGE" | jq -e \
+        '([.manifests[].platform | .os + "/" + .architecture] | sort) == ["linux/amd64", "linux/arm64"]' >/dev/null ||
+        steam_die 'Local manifest must contain exactly linux/amd64 and linux/arm64.'
 }
 
 read_private_env() {
     local path=$1 line key value permissions
+    safe_path "$path"
+    path=$SAFE_PATH
     [[ -f "$path" && ! -L "$path" ]] || steam_die 'Use --env-file with a private regular file.'
     [[ "$(stat -c %u "$path")" == "$EUID" ]] || steam_die 'Runtime env file must belong to you.'
+    [[ "$(stat -c %h "$path")" == 1 ]] || steam_die 'Runtime env file must not have hard links.'
     permissions=$(stat -c %a "$path")
     (( (8#$permissions & 077) == 0 )) || steam_die 'Runtime env file must have mode 600 or stricter.'
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -151,20 +147,125 @@ require_owned() {
 stop_container() {
     if container_exists; then
         require_owned
+        CONTAINER=$(podman inspect --format '{{.Id}}' "$CONTAINER")
+        [[ "$CONTAINER" =~ ^[a-f0-9]{64}$ ]] || steam_die 'Invalid immutable container ID.'
+        require_owned
         podman stop --time 20 "$CONTAINER" || return "$?"
         podman rm "$CONTAINER"
     fi
 }
 
+safe_path() {
+    local input=$1 part path=''
+    [[ "$input" == /* ]] || input="$ROOT/$input"
+    [[ "$input" != *$'\n'* && "$input" != *$'\r'* ]] || steam_die 'Unsafe path.'
+    [[ "$input" == "$(realpath -ms -- "$input")" ]] || steam_die 'Use a canonical path without dot segments or repeated separators.'
+    local -a parts
+    IFS=/ read -r -a parts <<< "$input"
+    for part in "${parts[@]}"; do
+        [[ -n "$part" ]] || continue
+        path="$path/$part"
+        [[ ! -L "$path" ]] || steam_die 'Path parents and entries must not be symlinks.'
+    done
+    SAFE_PATH=$input
+}
+
+private_directory() {
+    local path=$1 permissions
+    [[ ! -L "$path" ]] || steam_die 'Private directories must not be symlinks.'
+    if [[ -e "$path" ]]; then
+        [[ -d "$path" && "$(stat -c %u "$path")" == "$EUID" ]] ||
+            steam_die 'Private directories must belong to you.'
+        permissions=$(stat -c %a "$path")
+        (( (8#$permissions & 077) == 0 )) || steam_die 'Private directories must have mode 700 or stricter.'
+    fi
+}
+
+validation_path() {
+    safe_path "$1"
+    [[ "$SAFE_PATH" == "$ROOT/.local/validation/"* ]] ||
+        steam_die 'Explicit paths must be descendants beneath this repository .local/validation.'
+    local path="$SAFE_PATH" component
+    while [[ "$path" != "$ROOT" ]]; do
+        component=${path##*/}
+        case "$component" in
+            v3arm|v3arm64|v3x86|v3arm-amd64|v4x86_x11vnc|v4x86-x11vnc|migrations|migrated)
+                steam_die 'Legacy or migrated state is not disposable validation state.' ;;
+        esac
+        [[ ! -e "$path" || -d "$path" ]] || steam_die 'Validation path must be a directory.'
+        private_directory "$path"
+        path=${path%/*}
+    done
+}
+
+validate_state_root() {
+    if [[ -n "${STATE_ROOT:-}" ]]; then
+        validation_path "$STATE_ROOT"
+        STATE_ROOT=$SAFE_PATH
+        STATE="$STATE_ROOT/$TARGET"
+        safe_path "$STATE"
+        private_directory "$STATE"
+        if [[ -e "$STATE" ]]; then
+            if ! [[ -f "$STATE/.disposable-state" && ! -L "$STATE/.disposable-state" &&
+                "$(stat -c %u:%h "$STATE/.disposable-state")" == "$EUID:1" &&
+                "$(cat "$STATE/.disposable-state")" == "$PROJECT:$STATE_ROOT" ]]; then
+                steam_die 'Existing state is not owned disposable validation state.'
+            fi
+        fi
+    else
+        STATE="$ROOT/.local/podman/$TARGET"
+        safe_path "$STATE"
+        private_directory "$ROOT/.local"
+        private_directory "$ROOT/.local/podman"
+        private_directory "$STATE"
+    fi
+}
+
+validate_cid_file() {
+    [[ -n "${CID_FILE:-}" ]] || return 0
+    safe_path "$CID_FILE"
+    CID_FILE=$SAFE_PATH
+    [[ ! -e "$CID_FILE" && ! -L "$CID_FILE" ]] || steam_die 'CID receipt must not already exist.'
+    validation_path "${CID_FILE%/*}"
+    [[ -d "${CID_FILE%/*}" ]] || steam_die 'CID receipt parent must already exist.'
+}
+
+lock_normal_state() {
+    [[ -z "${STATE_ROOT:-}" ]] || return 0
+    validate_state_root
+    mkdir -p "$ROOT/.local/podman"
+    local lock="$ROOT/.local/podman/.multiarch-migration.lock" permissions
+    [[ ! -L "$lock" ]] || steam_die 'Migration lock must not be a symlink.'
+    if [[ -e "$lock" ]]; then
+        [[ -f "$lock" && "$(stat -c %u:%h "$lock")" == "$EUID:1" ]] ||
+            steam_die 'Migration lock must be a private owned regular file.'
+        permissions=$(stat -c %a "$lock")
+        (( (8#$permissions & 077) == 0 )) || steam_die 'Migration lock must be private.'
+    fi
+    exec {MIGRATION_LOCK_FD}>>"$lock"
+    flock -s "$MIGRATION_LOCK_FD"
+}
+
 prepare_state() {
-    local base="$ROOT/.local/podman" path
-    [[ ! -L "$ROOT/.local" && ! -L "$base" ]] || steam_die 'Runtime state parents must not be symlinks.'
-    STATE="$base/$TARGET"
-    [[ ! -L "$STATE" ]] || steam_die 'Runtime state must not be a symlink.'
-    mkdir -p "$STATE"
+    local path
+    validate_state_root
+    if [[ -n "${STATE_ROOT:-}" ]]; then
+        if [[ ! -e "$STATE" ]]; then
+            mkdir -p "$STATE_ROOT"
+            mkdir "$STATE"
+            (set -o noclobber; printf '%s\n' "$PROJECT:$STATE_ROOT" > "$STATE/.disposable-state")
+        fi
+    else
+        mkdir -p "$STATE"
+    fi
     for path in "$STATE/config" "$STATE/autoload.json"; do
         [[ ! -L "$path" ]] || steam_die 'Runtime config paths must not be symlinks.'
     done
+    [[ ! -e "$STATE/config" || -d "$STATE/config" ]] || steam_die 'Runtime config must be a directory.'
+    if [[ -e "$STATE/autoload.json" ]]; then
+        [[ -f "$STATE/autoload.json" && "$(stat -c %h "$STATE/autoload.json")" == 1 ]] ||
+            steam_die 'Runtime autoload config must be a regular file without hard links.'
+    fi
     mkdir -p "$STATE/config"
     if [[ ! -e "$STATE/autoload.json" ]]; then
         printf '%s\n' '{"LastFileLoaded":null,"LoadIntoMultiplayer":true,"ForgetLastFileOnTitle":true}' \

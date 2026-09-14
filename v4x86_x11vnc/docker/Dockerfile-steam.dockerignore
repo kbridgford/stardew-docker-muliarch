@@ -1,5 +1,0 @@
-**
-!Dockerfile-steam
-!rootfs/
-!rootfs/**
-**/*:Zone.Identifier

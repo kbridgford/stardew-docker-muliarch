@@ -3,7 +3,10 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-work=$(mktemp -d /tmp/stardew-architecture-test-XXXXXXXX)
+umask 077
+[[ ! -L "$ROOT/.local" && ! -L "$ROOT/.local/validation" ]] || exit 1
+work="$ROOT/.local/validation/architecture-$BASHPID-$RANDOM"
+mkdir -p "$work"
 trap 'rm -rf -- "$work"' EXIT
 mkdir "$work/bin"
 printf '#!/bin/bash\nprintf "%%s\\n" "$TEST_ARCH"\n' > "$work/bin/dpkg"
@@ -31,9 +34,9 @@ if TEST_ARCH=riscv64 bash "$ROOT/scripts/container/exec-game.sh" "$work/game app
 fi
 grep -q 'Unsupported container architecture' "$work/error"
 printf 'PASS unsupported architecture fails explicitly\n'
-TEST_ARCH=amd64 TARGETARCH=amd64 bash "$ROOT/v3arm64/docker/build/setup-arch" > "$work/output"
+TEST_ARCH=amd64 TARGETARCH=amd64 bash "$ROOT/multiarch/docker/build/setup-arch" > "$work/output"
 grep -q 'Box64 is not required' "$work/output"
-if TEST_ARCH=amd64 TARGETARCH=arm64 bash "$ROOT/v3arm64/docker/build/setup-arch" > "$work/error" 2>&1; then
+if TEST_ARCH=amd64 TARGETARCH=arm64 bash "$ROOT/multiarch/docker/build/setup-arch" > "$work/error" 2>&1; then
     echo 'Mismatched build/container architectures accepted.' >&2; exit 1
 fi
 printf 'PASS native setup skips Box64 and mismatched architecture fails\n'

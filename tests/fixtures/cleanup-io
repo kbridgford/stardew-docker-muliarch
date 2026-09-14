@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Interrupt exact synthetic retirement operations, never a real project root.
+set +x
+set -euo pipefail
+root=${CLEANUP_FIXTURE_ROOT:?}
+tool=${0##*/}
+fault=''
+[[ ! -f $root/io-fault ]] || IFS= read -r fault < "$root/io-fault"
+args=("$@")
+path=${args[-1]}
+if [[ $tool == rm && $path == "$root/.local/podman/.v3arm64-retired-"* ]]; then
+    if [[ $fault == delete-fail && -f $root/deleted-one ]]; then exit 1; fi
+    /usr/bin/rm "$@"
+    : > "$root/deleted-one"
+    if [[ $fault == delete-signal ]]; then kill -TERM "$PPID"; fi
+elif [[ $tool == mv ]]; then
+    /usr/bin/mv "$@"
+    if [[ $fault == rename-signal && $path == "$root/.local/podman/.v3arm64-retired-"* ]]; then
+        kill -TERM "$PPID"
+    fi
+else
+    exit 97
+fi

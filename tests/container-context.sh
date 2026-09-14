@@ -6,8 +6,12 @@ source "$ROOT/tests/fixtures/cache.sh"
 
 [[ $EUID -ne 0 ]] || steam_die 'Run integration checks through rootless Podman.'
 podman info --format json | jq -e '.host.security.rootless' >/dev/null
-work=$(mktemp -d /tmp/stardew-context-test-XXXXXXXX)
-suffix=${work##*-}
+umask 077
+[[ ! -L "$ROOT/.local" && ! -L "$ROOT/.local/validation" ]] || steam_die 'Unsafe context evidence parents.'
+work="$ROOT/.local/validation/context-$BASHPID-$RANDOM"
+mkdir -p "$work"
+export TMPDIR="$work"
+suffix=${work##*/}
 suffix=${suffix,,}
 images=()
 container=
@@ -35,28 +39,26 @@ trap 'exit 143' TERM
 cache_fixture "$work/steam"
 mkdir "$work/empty"
 
-for project in v3x86 v3arm v4x86_x11vnc v3arm64; do
-    image="localhost/stardew-context-test-$suffix:$project"
-    images+=("$image")
-    contexts=(--build-context "steam=$work/steam" --build-context "devtools=$ROOT/scripts")
-    if [[ "$project" != v3arm ]]; then
-        contexts+=(--build-context "mods=$ROOT/mods")
-    fi
-    if ! podman build --platform linux/amd64 --layers --target validated --tag "$image" \
-        "${contexts[@]}" --ignorefile "$ROOT/$project/docker/Dockerfile-steam.dockerignore" \
-        --file "$ROOT/$project/docker/Dockerfile-steam" "$ROOT/$project/docker" \
-        > "$work/$project.log" 2>&1; then
-        tail -40 "$work/$project.log" >&2
-        exit 1
-    fi
-    printf 'PASS %s local context + named vanilla cache validation\n' "$project"
-done
+project=multiarch
+image="localhost/stardew-context-test-$suffix:$project"
+if podman image exists "$image"; then steam_die 'Conflicting context-test image exists.'; fi
+images+=("$image")
+contexts=(--build-context "steam=$work/steam" --build-context "devtools=$ROOT/scripts")
+contexts+=(--build-context "mods=$ROOT/mods")
+if ! podman build --platform linux/amd64 --layers --target validated --tag "$image" \
+    "${contexts[@]}" --ignorefile "$ROOT/$project/docker/Dockerfile-steam.dockerignore" \
+    --file "$ROOT/$project/docker/Dockerfile-steam" "$ROOT/$project/docker" \
+    > "$work/$project.log" 2>&1; then
+    tail -40 "$work/$project.log" >&2
+    exit 1
+fi
+printf 'PASS %s local context + named vanilla cache validation\n' "$project"
 
 if podman build --platform linux/amd64 --layers --target validated \
     --build-context "steam=$work/empty" --build-context "devtools=$ROOT/scripts" \
     --build-context "mods=$ROOT/mods" \
-    --ignorefile "$ROOT/v3x86/docker/Dockerfile-steam.dockerignore" \
-    --file "$ROOT/v3x86/docker/Dockerfile-steam" "$ROOT/v3x86/docker" \
+    --ignorefile "$ROOT/multiarch/docker/Dockerfile-steam.dockerignore" \
+    --file "$ROOT/multiarch/docker/Dockerfile-steam" "$ROOT/multiarch/docker" \
     > "$work/missing.log" 2>&1; then
     steam_die 'Empty named cache unexpectedly passed image validation.'
 fi
@@ -70,19 +72,19 @@ printf 'exclude this private input\n' > "$work/context/runtime.local.env"
 printf 'include when required\n' > "$work/context/mods/manifest.json"
 printf 'include when required\n' > "$work/context/rootfs/service"
 printf 'include when required\n' > "$work/context/build/setup-arch"
-for project in v3x86 v3arm v4x86_x11vnc v3arm64; do
-    image="localhost/stardew-context-test-$suffix:ignore-$project"
-    images+=("$image")
-    podman build --quiet --tag "$image" \
-        --ignorefile "$ROOT/$project/docker/Dockerfile-steam.dockerignore" \
-        --file "$work/context/Dockerfile-steam" "$work/context" > "$work/ignore-$project.log" 2>&1
-    container="stardew-context-test-$suffix"
-    podman create --name "$container" "$image" /unused > /dev/null
-    podman export "$container" | tar -tf - > "$work/export-$project"
-    if grep -qE 'game_data|runtime.local.env|context/mods/' "$work/export-$project"; then
-        steam_die "Forbidden input leaked through $project ignore rules."
-    fi
-    podman rm "$container" > /dev/null
-    container=
-    printf 'PASS %s context excludes installers and private runtime settings\n' "$project"
-done
+image="localhost/stardew-context-test-$suffix:ignore-$project"
+if podman image exists "$image"; then steam_die 'Conflicting context-test image exists.'; fi
+images+=("$image")
+podman build --quiet --tag "$image" \
+    --ignorefile "$ROOT/$project/docker/Dockerfile-steam.dockerignore" \
+    --file "$work/context/Dockerfile-steam" "$work/context" > "$work/ignore-$project.log" 2>&1
+container="stardew-context-test-$suffix"
+container=$(podman create --name "$container" "$image" /unused)
+[[ "$container" =~ ^[a-f0-9]{64}$ ]] || steam_die 'Invalid context container ID.'
+podman export "$container" | tar -tf - > "$work/export-$project"
+if grep -qE 'game_data|runtime.local.env|context/mods/' "$work/export-$project"; then
+    steam_die "Forbidden input leaked through $project ignore rules."
+fi
+podman rm "$container" > /dev/null
+container=
+printf 'PASS %s context excludes installers and private runtime settings\n' "$project"

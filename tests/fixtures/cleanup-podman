@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Synthetic JSON model only; no forwarding to real Podman.
+set +x
+set -euo pipefail
+root=${CLEANUP_FIXTURE_ROOT:?}
+model=$(cat "$root/model.json")
+fault=$(jq -r '.fault // ""' <<< "$model")
+jq -nc --args '$ARGS.positional' -- "$@" >> "$root/operations.jsonl"
+save() {
+    printf '%s\n' "$model" > "$root/model-next-$BASHPID"
+    mv -- "$root/model-next-$BASHPID" "$root/model.json"
+}
+image_by_ref() {
+    jq -c --arg ref "$1" '[.images[]|select(.Id == $ref or any(.Names[]?; . == $ref))] | unique' <<< "$model"
+}
+container_by_ref() {
+    jq -c --arg ref "$1" '[.containers[]|select(.Id == $ref or .Name == $ref)]' <<< "$model"
+}
+case "${1:-}" in
+    info)
+        [[ $# == 3 && $2 == --format && $3 == json ]] || exit 97
+        jq -nc --argjson rootless "$(jq 'if has("rootless") then .rootless else true end' <<< "$model")" \
+            '{host:{security:{rootless:$rootless}}}' ;;
+    images)
+        [[ $# == 5 && $2 == --all && $3 == --no-trunc && $4 == --format && $5 == json ]] || exit 97
+        jq -c .images <<< "$model" ;;
+    image)
+        [[ $# == 3 && $2 == inspect ]] || exit 97
+        found=$(image_by_ref "$3")
+        [[ $(jq length <<< "$found") == 1 ]] || exit 125
+        printf '%s\n' "$found" ;;
+    manifest)
+        [[ $# == 3 ]] || exit 97
+        found=$(image_by_ref "$3")
+        case $2 in
+            exists)
+                jq -e 'length == 1 and .[0].ManifestType == "application/vnd.oci.image.index.v1+json"' <<< "$found" >/dev/null ;;
+            inspect)
+                jq -e 'length == 1 and .[0].ManifestType == "application/vnd.oci.image.index.v1+json"' <<< "$found" >/dev/null || exit 125
+                jq -c '.[0].Manifest' <<< "$found" ;;
+            rm)
+                [[ $fault != manifest-fail ]] || exit 125
+                [[ $fault != manifest-noop ]] || exit 0
+                [[ $(jq length <<< "$found") == 1 ]] || exit 125
+                id=$(jq -r '.[0].Id' <<< "$found")
+                [[ $3 == "$id" ]] || exit 97
+                model=$(jq -c --arg id "$id" '.images |= map(select(.Id != $id))' <<< "$model")
+                save ;;
+            *) exit 97 ;;
+        esac ;;
+    container)
+        [[ $# == 3 && $2 == exists ]] || exit 97
+        [[ $(container_by_ref "$3" | jq length) == 1 ]] ;;
+    inspect)
+        [[ $# == 2 ]] || exit 97
+        found=$(container_by_ref "$2")
+        [[ $(jq length <<< "$found") == 1 ]] || exit 125
+        printf '%s\n' "$found" ;;
+    stop)
+        [[ $# == 4 && $2 == --time && $3 == 20 && $4 =~ ^[a-f0-9]{64}$ ]] || exit 97
+        [[ $fault != stop-fail ]] || exit 125
+        [[ $(container_by_ref "$4" | jq length) == 1 ]] || exit 125
+        model=$(jq -c --arg id "$4" '.containers |= map(if .Id==$id then
+            .State.Status="exited"|.State.Running=false else . end)' <<< "$model")
+        save ;;
+    rm)
+        [[ $# == 2 && $2 =~ ^[a-f0-9]{64}$ ]] || exit 97
+        [[ $fault != rm-fail ]] || exit 125
+        found=$(container_by_ref "$2")
+        jq -e 'length == 1 and .[0].State.Running == false' <<< "$found" >/dev/null || exit 125
+        model=$(jq -c --arg id "$2" '.containers |= map(select(.Id != $id))' <<< "$model")
+        save ;;
+    untag)
+        [[ $# == 3 && $2 =~ ^[a-f0-9]{64}$ ]] || exit 97
+        [[ $fault != untag-fail ]] || exit 125
+        found=$(image_by_ref "$2")
+        jq -e --arg ref "$3" 'length == 1 and .[0].ManifestType == "application/vnd.oci.image.manifest.v1+json" and
+            any(.[0].Names[]; . == $ref)' <<< "$found" >/dev/null || exit 125
+        model=$(jq -c --arg id "$2" --arg ref "$3" '.images |= map(if .Id==$id then .Names-=[$ref] else . end)' <<< "$model")
+        save ;;
+    *) exit 97 ;;
+esac

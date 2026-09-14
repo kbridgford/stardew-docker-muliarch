@@ -5,6 +5,12 @@ state=${MOCK_STATE:?}
 case "$1" in
     info) printf '%s\n' '{"host":{"arch":"amd64","security":{"rootless":true}}}' ;;
     image) printf 'amd64\n' ;;
+    manifest)
+        case "$2" in
+            exists) exit 0 ;;
+            inspect) printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}' ;;
+            *) exit 98 ;;
+        esac ;;
     container)
         [[ "${MOCK_CASE:-}" != query-error ]] || exit 125
         [[ -e "$state/live" || "${MOCK_CASE:-}" == conflict ]] ;;
@@ -13,19 +19,27 @@ case "$1" in
         while (( $# )); do
             case "$1" in
                 --cidfile) cidfile=$2; shift 2 ;;
+                --platform) printf '%s' "$2" > "$state/platform"; shift 2 ;;
                 --volume)
                     [[ "$2" != *:/config:Z ]] || printf '%s' "${2%:/config:Z}" > "$state/config"
                     shift 2 ;;
                 *) shift ;;
             esac
         done
-        printf '%064d' 1 > "$cidfile"
+        case "${MOCK_CASE:-}" in
+            bad-receipt) printf 'not-an-immutable-id\n' > "$cidfile" ;;
+            symlink-receipt)
+                printf '%064d' 2 > "$state/foreign-receipt"
+                ln -s "$state/foreign-receipt" "$cidfile" ;;
+            *) printf '%064d' 1 > "$cidfile" ;;
+        esac
         touch "$state/live"
         rm -f "$state/exit"
         ;;
     inspect)
         case "$3" in
             '{{.Architecture}}') printf 'amd64\n' ;;
+            '{{.Id}}') printf '%064d\n' 1 ;;
             '{{.State.Running}}') [[ -e "$state/exit" ]] && printf 'false\n' || printf 'true\n' ;;
             '{{json .State}}') printf '{"Running":false,"ExitCode":%s}\n' "$(cat "$state/exit")" ;;
             *)
