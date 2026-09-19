@@ -198,6 +198,13 @@ case "$1" in
         grep -qx '        mods: ../mods' "$test_repo/multiarch/docker-compose-steam.yml"
         grep -qx 'FROM scratch AS mods' "$test_repo/multiarch/docker/Dockerfile-steam"
         grep -qx 'COPY --from=mods / /data/Stardew/game/Mods/' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -Fxq 'FROM --platform=linux/amd64 docker.io/library/debian:trixie-slim AS validated' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -Fxq 'FROM validated AS game' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -Fxq 'FROM --platform=$TARGETPLATFORM docker.io/jlesage/baseimage-gui:debian-13-v4.14' "$test_repo/multiarch/docker/Dockerfile-steam"
+        [[ $(grep -cw 'libicu76' "$test_repo/multiarch/docker/Dockerfile-steam") == 2 ]]
+        grep -qw 'libasound2t64' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -qw 'libssl3t64' "$test_repo/multiarch/docker/Dockerfile-steam"
+        if grep -Eq 'bookworm|libicu72|libasound2([[:space:]]|$)|libssl3([[:space:]]|$)' "$test_repo/multiarch/docker/Dockerfile-steam"; then exit 1; fi
         if grep -q 'extends:' "$test_repo/multiarch/docker-compose-steam.yml"; then exit 1; fi
         grep -q -- "$test_repo/multiarch/docker\$" "$MOCK_PODMAN_CALLS"
         if grep -E 'STEAM_PASS|app_update|steamcmd' "$MOCK_PODMAN_CALLS"; then exit 1; fi ;;

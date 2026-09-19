@@ -2,7 +2,7 @@ ARG TARGETPLATFORM
 FROM scratch AS steam
 FROM scratch AS devtools
 FROM scratch AS mods
-FROM --platform=linux/amd64 docker.io/library/debian:bookworm-slim AS validated
+FROM --platform=linux/amd64 docker.io/library/debian:trixie-slim AS validated
 RUN apt-get update && apt-get install -y --no-install-recommends bash jq ca-certificates && apt-get clean
 COPY --from=devtools validate-steam-cache.sh /scripts/validate-steam-cache.sh
 COPY --from=devtools lib/steam-cache.sh /scripts/lib/steam-cache.sh
@@ -13,14 +13,16 @@ FROM validated AS game
 RUN mkdir -p /data/Stardew && cp -a /cache/steam/game /data/Stardew/game
 ENV GAME_PATH=/data/Stardew/game
 ARG SMAPI_VERSION=4.0.8
-RUN apt-get update && apt-get install -y --no-install-recommends curl unzip libicu72 && apt-get clean
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip libicu76 && apt-get clean
 COPY --from=devtools container/install-smapi.sh /install-smapi.sh
 RUN bash /install-smapi.sh
 
 # GLX support is required; the earlier v4.6 base did not provide it.
-FROM --platform=$TARGETPLATFORM docker.io/jlesage/baseimage-gui:debian-12-v4.13.2
+FROM --platform=$TARGETPLATFORM docker.io/jlesage/baseimage-gui:debian-13-v4.14
 ARG TARGETARCH
 ARG BOX64_PACKAGE=box64
+ARG BOX64_VERSION=0.4.5+20260913.a83b0ac-1
+ARG BOX64_REPO_COMMIT=4bc67b7174a7c1076d19ea4e9c81cc87460222a4
 ENV APP_NAME=StardewValley GAME_PATH=/data/Stardew/game STARDEW_MODDED=1 \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac && \
@@ -30,8 +32,8 @@ COPY --from=devtools container/install-packages.sh /install-packages.sh
 COPY build/setup-arch /build/setup-arch
 RUN bash /build/setup-arch
 RUN bash /install-packages.sh \
-    xterm gettext-base jq procps locales libasound2 libgl1 libglu1-mesa \
-    libicu72 libssl3 zlib1g libstdc++6 mesa-utils
+    xterm gettext-base jq procps locales libasound2t64 libgl1 libglu1-mesa \
+    libicu76 libssl3t64 zlib1g libstdc++6 mesa-utils
 COPY --from=game /data/Stardew/game/ /data/Stardew/game/
 COPY --from=game /cache/steam/steam-sdk/ /data/.steam/
 COPY --from=mods / /data/Stardew/game/Mods/

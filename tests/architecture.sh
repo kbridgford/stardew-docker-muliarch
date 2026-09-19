@@ -40,3 +40,46 @@ if TEST_ARCH=amd64 TARGETARCH=arm64 bash "$ROOT/multiarch/docker/build/setup-arc
     echo 'Mismatched build/container architectures accepted.' >&2; exit 1
 fi
 printf 'PASS native setup skips Box64 and mismatched architecture fails\n'
+
+export BOX64_VERSION=0.4.5+20260913.a83b0ac-1
+export BOX64_REPO_COMMIT=4bc67b7174a7c1076d19ea4e9c81cc87460222a4
+grep -Fxq "ARG BOX64_VERSION=$BOX64_VERSION" "$ROOT/multiarch/docker/Dockerfile-steam"
+grep -Fxq "ARG BOX64_REPO_COMMIT=$BOX64_REPO_COMMIT" "$ROOT/multiarch/docker/Dockerfile-steam"
+for invalid in missing-version missing-snapshot branch-snapshot invalid-package wildcard-version; do
+    case "$invalid" in
+        missing-version) pin_options=(-u BOX64_VERSION) ;;
+        missing-snapshot) pin_options=(-u BOX64_REPO_COMMIT) ;;
+        branch-snapshot) pin_options=(BOX64_REPO_COMMIT=main) ;;
+        invalid-package) pin_options=(BOX64_PACKAGE=--allow-unauthenticated) ;;
+        wildcard-version) pin_options=('BOX64_VERSION=0.4.*') ;;
+    esac
+    if TEST_ARCH=arm64 TARGETARCH=arm64 env "${pin_options[@]}" \
+        bash "$ROOT/multiarch/docker/build/setup-arch" > "$work/error" 2>&1; then
+        echo "Unsafe Box64 pin accepted: $invalid" >&2; exit 1
+    fi
+    grep -Eq 'Set an exact|Set an immutable|Invalid Box64' "$work/error"
+done
+printf 'PASS ARM setup rejects missing, mutable and malformed pins before installation\n'
+
+export TEST_PIN_CALLS="$work/pin-calls" TEST_INSTALLED_VERSION="$BOX64_VERSION"
+mkdir -p "$work/keyrings" "$work/sources"
+sed -e "s|/install-packages.sh|$work/install-packages.sh|g" \
+    -e "s|/usr/share/keyrings|$work/keyrings|g" \
+    -e "s|/etc/apt/sources.list.d|$work/sources|g" \
+    "$ROOT/multiarch/docker/build/setup-arch" > "$work/setup-arch"
+printf '#!/bin/bash\nprintf "install:%%s\\n" "$*" >> "$TEST_PIN_CALLS"\n' > "$work/install-packages.sh"
+printf '#!/bin/bash\nprintf "curl:%%s\\n" "$*" >> "$TEST_PIN_CALLS"\nprintf "fixture key\\n"\n' > "$work/bin/curl"
+printf '#!/bin/bash\n[[ "$*" == "--dearmor --batch --yes -o "* ]]\noutput=${*: -1}\ncat > "$output"\n' > "$work/bin/gpg"
+printf '#!/bin/bash\nprintf "%%s" "$TEST_INSTALLED_VERSION"\n' > "$work/bin/dpkg-query"
+printf '#!/bin/bash\nprintf "apt:%%s\\n" "$*" >> "$TEST_PIN_CALLS"\n' > "$work/bin/apt-get"
+chmod +x "$work/bin/"*
+TEST_ARCH=arm64 TARGETARCH=arm64 bash "$work/setup-arch" > "$work/output"
+grep -Fxq "install:box64=$BOX64_VERSION" "$TEST_PIN_CALLS"
+grep -Fxq "curl:--fail --location https://raw.githubusercontent.com/ryanfortner/box64-debs/$BOX64_REPO_COMMIT/KEY.gpg" "$TEST_PIN_CALLS"
+grep -Fxq "deb [arch=arm64 signed-by=$work/keyrings/box64.gpg] https://raw.githubusercontent.com/ryanfortner/box64-debs/$BOX64_REPO_COMMIT/debian/ ./" "$work/sources/box64.list"
+grep -Fxq 'fixture key' "$work/keyrings/box64.gpg"
+if TEST_ARCH=arm64 TARGETARCH=arm64 TEST_INSTALLED_VERSION=0.0.0 bash "$work/setup-arch" > "$work/error" 2>&1; then
+    echo 'Mismatched installed Box64 version accepted.' >&2; exit 1
+fi
+grep -q 'Installed Box64 version does not match' "$work/error"
+printf 'PASS ARM setup uses signed immutable snapshot, exact version and mismatch rejection\n'

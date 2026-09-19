@@ -176,10 +176,18 @@ artifacts must exist. Compatibility with a newly acquired game needs real
 validation rather than inferring success from an installer exit code.
 
 The runtime stage selects
-`docker.io/jlesage/baseimage-gui:debian-12-v4.13.2`, an explicitly approved
-change after Debian 11 security-package URLs failed during real builds.
-This also includes the post-v4.8.0 GLX work, but does not by itself
-establish game compatibility.
+`docker.io/jlesage/baseimage-gui:debian-13-v4.14`. Validation and the SMAPI
+installer also use Debian 13: `validated` starts from `debian:trixie-slim`,
+and `game` inherits that explicitly amd64 stage. The installer uses `libicu76`;
+runtime dependencies use `libicu76`, `libasound2t64`, and `libssl3t64`.
+Do not mix Bookworm libraries into this runtime or add compatibility SONAME
+symlinks to bypass missing dependencies.
+
+The GUI tag selects the v4.14 release line, not an immutable digest. Record
+resolved base manifests when validating an update; `--no-cache` disables
+build layers but is not itself a guarantee of refreshing mutable base tags.
+The prior Debian 12/v4.13.2 results below remain historical. A newer base and
+its GLX support do not, by themselves, establish game compatibility.
 
 Runtime stages declare their architecture explicitly so an amd64 installer
 stage cannot select the runtime's base architecture implicitly. The dual-platform
@@ -187,7 +195,10 @@ multiarch stage uses the build's `TARGETPLATFORM` and checks `TARGETARCH` agains
 the actual package architecture. Package
 installation uses jlesage's own temporary account initialization/cleanup helpers
 and a CA bundle from the validated Debian stage; APT signatures and checksums
-remain enabled.
+remain enabled. The inspected v4.14 account definitions changed upstream,
+but its package-init helper still provides `init_env` and `cleanup_env`.
+Both Debian 13 builds succeeded with the existing wrapper; no launcher,
+SMAPI-version, mod, or cache changes were needed for the build.
 
 `scripts/container/exec-game.sh` detects the actual container architecture with
 `dpkg --print-architecture`. On amd64 it executes the apphost natively. On arm64
@@ -199,8 +210,22 @@ wrapper `StardewValley`.
 Architecture-gated Box64 installation follows the approach used by itzg's
 **Bedrock** image, rather than its Java-server image. Setup also checks that
 the declared build target matches the container package architecture.
-`BOX64_PACKAGE` can select the Box64 package; the source and installed version
-are explicit, but package versions are not pinned.
+`BOX64_PACKAGE` selects the Box64 package (default `box64`). ARM builds pin
+`BOX64_VERSION=0.4.5+20260913.a83b0ac-1` and
+`BOX64_REPO_COMMIT=4bc67b7174a7c1076d19ea4e9c81cc87460222a4`.
+The repository commit addresses an immutable upstream snapshot containing the
+key, signed APT metadata, and package; the rolling repository removes older
+versions. APT signature/package verification and TLS remain enabled, and setup
+checks the installed version exactly. Missing/malformed pins or unavailable
+packages fail; there is no fallback to a newer build. Native amd64 skips this
+entire installation.
+
+This pin preserves the previously validated emulator: the unpinned
+September 19 build stalled before ARM SMAPI startup during the Debian 13
+upgrade, while a controlled old-executable comparison reached SMAPI on the
+same Debian 13 image. Change the package/version/snapshot together only with
+explicit intent and both-platform acceptance; changing the GUI base must not
+silently advance the emulator again.
 
 ### Compose compatibility
 
@@ -467,7 +492,69 @@ pre-cleanup manifest, and successful evidence-log checksums. Legacy cleanup
 completed with retained-state verification. The subsequent no-cache acceptance
 also passed; historical results below were not used as a substitute.
 
-### Final post-cleanup acceptance: September 14, 2026
+### Debian 13 upgrade acceptance: September 19, 2026
+
+All stages now use Debian 13. The final no-cache dual-platform build completed
+in 361 seconds, including SMAPI installation in the amd64 Trixie stage.
+The runtime base resolved to GUI v4.14, and both final members were verified
+against the matching pulled base layer prefixes. No game download, SMAPI/mod
+upgrade, account-init workaround change, or launcher change was needed.
+
+The first ARM attempt timed out before SMAPI at the unchanged 600-second
+startup limit. Its rolling Box64 dependency had advanced to
+`0.4.5+20260919.38f4831-1`. A same-image headless comparison reached SMAPI only
+with the previously validated executable; this diagnostic was not counted as
+game acceptance. After explicit approval, the signed snapshot/version pin
+described above was added and both images were rebuilt from fresh layers.
+The final image installs `0.4.5+20260913.a83b0ac-1` normally through verified
+APT metadata; it does not copy the diagnostic binary.
+
+| Platform | Actual runtime | Game/mod startup and HTTP | GLX | Lifecycle |
+|---|---|---|---|---|
+| linux/amd64 | Debian 13, native apphost, no Box64 | Passed | llvmpipe, OpenGL 4.5 | Passed |
+| linux/arm64 | Debian 13, pinned Box64 under host QEMU | Passed within 600s | llvmpipe, OpenGL 4.5 | Passed |
+
+Both fresh SMAPI logs loaded Always On Server, Auto Load Game, and Unlimited
+Players. Both lifecycle cases preserved exact config-marker contents and
+1000:1000 host ownership, propagated TERM as 143 and KILL as 137, rejected
+dead-game readiness, and cleaned their own resources. All eight final
+probe/smoke/lifecycle container IDs were confirmed absent.
+The 41 development cases, architecture/exit/pinning checks, readiness and
+lifecycle fixtures, three real context checks, Bash syntax, and ShellCheck
+passed. Pinning tests reject missing/mutable/malformed inputs and installed
+version mismatch; native setup still bypasses Box64 entirely.
+
+The game cache, mods, existing normal/legacy state, backup, private settings,
+historical receipts, and original audit match their immediate pre-upgrade
+snapshots. No migration or retirement was repeated. The known-good Debian 12
+manifest is retained locally as
+`localhost/stardew-dev-d9e0cf953303:rollback-debian12-20260919`; it was restored
+on failed acceptance and preserved unchanged after final success. Failed
+builds preserve the current publication, but a successful build can publish
+an image that later fails runtime checks: retain a verified rollback manifest
+through acceptance rather than relying on build staging alone.
+
+Private final evidence is
+`.local/validation/debian13-20260919-2/results.json`, with full manifest,
+base/package, smoke, and preservation records in the same directory or the
+initial `debian13-20260919-1/` evidence directory. Lifecycle evidence is
+`.local/validation/lifecycle-20260919T181031Z-421351-23846/`.
+The verified final index storage ID is
+`42ee6a7aa445adf6bd7fe51c0275d0a948e40a39fe4ea35dbd55017883ca7511`;
+member digests are recorded in `results.json`.
+
+On this Podman host, a direct `create --platform linux/arm64` manifest probe
+selected amd64, while `run --platform linux/arm64` selected ARM64. The helper
+and corrected acceptance probes use `run` and verify actual package
+architecture. Podman's host-member warning is not a substitute for this
+check, and a platform label alone is not a pass.
+
+Acceptance stopped at the existing startup/graphics/lifecycle boundary.
+Interactive GUI controls, fresh VNC authentication, gameplay, multiplayer,
+world hosting, real-save loading, native ARM hardware, and performance were
+not tested or certified. No timeout extension was used to make ARM pass.
+
+### Historical post-cleanup acceptance: September 14, 2026
 
 The real `build multiarch --no-cache` completed successfully in 225 seconds
 using the existing local Steam files. Exactly two fresh manifest members were

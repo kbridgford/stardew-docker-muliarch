@@ -34,13 +34,33 @@ published manifest. `--no-cache` is build-only: it bypasses image-layer reuse,
 not the local Steam files; it neither refreshes the game nor prunes storage.
 OS, base-image, SMAPI, and emulator inputs can still require networking.
 
-The runtime base remains `docker.io/jlesage/baseimage-gui:debian-12-v4.13.2`.
+The runtime base is `docker.io/jlesage/baseimage-gui:debian-13-v4.14`.
+Validation and SMAPI installation also use Debian 13: the explicitly amd64
+`validated` stage starts from `debian:trixie-slim`, and `game` inherits it.
+The v4.14 tag selects a release line, not an immutable digest; record the
+resolved bases for each upgrade. `--no-cache` alone does not refresh base tags.
 The final stage selects `TARGETPLATFORM`; Box64 installation is ARM64-only.
+Box64 is pinned to `0.4.5+20260913.a83b0ac-1` using signed upstream repository
+snapshot `4bc67b7174a7c1076d19ea4e9c81cc87460222a4`. Setup requires an exact
+version and commit, verifies the installed version, and never falls back to
+the rolling repository. Keep `BOX64_PACKAGE`, `BOX64_VERSION`, and
+`BOX64_REPO_COMMIT` consistent; changing this tested pin requires explicit
+intent and repeated acceptance. The newer rolling build stalled before ARM
+SMAPI startup during the Debian 13 upgrade; pinning restored the tested behavior.
 At launch, `scripts/container/exec-game.sh` checks actual package architecture,
 uses native amd64 or explicit Box64 dispatch, and rejects unsupported platforms.
 On an amd64 host, QEMU/binfmt runs ARM userspace; Box64 then runs the x86-64
 game inside it. Do not confuse these layers or infer architecture solely from
-host-default image inspection.
+host-default image inspection. On the validation host, `podman create
+--platform linux/arm64` selected amd64 from the manifest, whereas `podman run`
+selected ARM64. Use run-based probes, matching the helper, and verify actual
+package architecture rather than trusting a label or warning.
+
+For base upgrades, preserve and verify a separate rollback manifest before
+building. Staged publication protects against build failure, not subsequent
+runtime failure. If acceptance fails, clean only owned test resources and
+restore the known-good manifest with manifest-aware operations; do not reset
+user state or delete shared layers.
 
 ## Procedure
 
@@ -150,7 +170,35 @@ user data; there is no automatic rollback command.
 - Report incomplete or blocked platforms explicitly; never mark the matrix
   complete from one passing member.
 
-### Passed automated evidence: September 14, 2026
+### Passed automated evidence: September 19, 2026
+
+The Debian 13 upgrade's final no-cache build passed in 361 seconds, including
+the Trixie-based SMAPI installer. Both actual runtime platforms passed Debian
+13/package/dispatch probes, fresh SMAPI loading of the three baseline mods,
+HTTP response, llvmpipe OpenGL 4.5, and the existing lifecycle matrix. Exact
+marker recreation/ownership, TERM143, KILL137, and dead-readiness rejection
+passed. All eight final test container IDs, markers, and staged credentials
+were removed. Game cache, mods, current normal/legacy state, backup, private
+settings, historical receipts, and audit matched their pre-upgrade snapshots.
+
+The first unpinned ARM attempt hit the existing 600-second limit before SMAPI;
+the known-good manifest was restored. A bounded same-image diagnostic reached
+SMAPI with the old Box64 executable, but was not counted as game acceptance.
+After explicit user approval, the exact old package was installed from its
+signed immutable snapshot, both images were rebuilt, and the complete
+acceptance passed without extending timeouts. No game/SMAPI/mod updates or
+launcher/account-init wrapper changes were needed.
+
+Private final evidence: `.local/validation/debian13-20260919-2/results.json`;
+lifecycle: `.local/validation/lifecycle-20260919T181031Z-421351-23846/`.
+The earlier attempts and base/dependency diagnosis are retained privately under
+`.local/validation/debian13-20260919-1/`. The known-good prior manifest remains
+`localhost/stardew-dev-d9e0cf953303:rollback-debian12-20260919`.
+Relevant development, architecture/pinning, readiness/lifecycle, context,
+syntax, and ShellCheck checks passed. There was no migration/retirement rerun,
+Steam acquisition, fresh authentication test, or deeper gameplay testing.
+
+### Historical consolidation evidence: September 14, 2026
 
 The renamed cached build/rebuild and post-retirement real `--no-cache` build
 passed with exactly two platforms. Fresh actual-architecture/dispatch probes,

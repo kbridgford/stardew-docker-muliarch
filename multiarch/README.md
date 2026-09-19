@@ -22,6 +22,13 @@ with a local `--manifest`, not a single-platform tag. It verifies exactly both
 platforms before replacing the project image name. Nothing is pushed to a registry.
 The final runtime stage uses `TARGETPLATFORM`; Box64 installation is skipped on
 amd64 and required on arm64.
+The GUI base is `jlesage/baseimage-gui:debian-13-v4.14`; validation and SMAPI
+installation inherit an explicitly amd64 `debian:trixie-slim` stage. The game
+cache, SMAPI 4.0.8, and root mods are unchanged. The v4.14 tag selects a release
+line, not an immutable digest; record resolved bases for each acceptance run.
+ARM Box64 is pinned to `0.4.5+20260913.a83b0ac-1` from a signed immutable
+repository snapshot, avoiding the observed newer rolling-package startup
+regression. Native amd64 installs no Box64.
 Build-only `--no-cache` bypasses image-layer reuse, never the local Steam cache.
 It does not prune images, refresh game files, or push anything.
 
@@ -79,11 +86,20 @@ migration and initial cached build/rebuild, architecture probes, disposable
 smoke, and lifecycle checks have passed on both platforms. Legacy references
 and the original state were retired; the backup and migrated state still verify.
 Shared and unproven-unshared image objects were retained rather than pruned.
-The subsequent real `--no-cache` rebuild and both-platform startup/GLX/lifecycle
-acceptance passed. Private results are recorded in
+The subsequent Debian 12 `--no-cache` rebuild and both-platform startup/GLX/lifecycle
+acceptance passed on September 14, 2026. Historical private results are recorded in
 `.local/validation/consolidate-fresh-20260914-1/results.json`.
+
+The Debian 13 upgrade passed the same automated boundary on September 19,
+2026: a fresh two-platform build, actual architecture/package probes,
+game/SMAPI/mod startup, HTTP/GLX, config-marker recreation/ownership, TERM/KILL
+propagation, dead-readiness rejection, and scoped cleanup. Final evidence is
+`.local/validation/debian13-20260919-2/results.json`. The prior Debian 12
+manifest is retained locally as
+`localhost/stardew-dev-d9e0cf953303:rollback-debian12-20260919`.
+Existing state, backup, game cache, mods, and private settings were preserved.
 Human interaction, multiplayer, world and real-save checks remain optional
-and unverified.
+and unverified; fresh authentication testing was not added to this upgrade.
 
 See [local development](../docs/local-development.md) for prerequisites,
 private authentication, isolated state, backup/rollback safeguards, limitations
