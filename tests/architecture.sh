@@ -10,7 +10,7 @@ mkdir -p "$work"
 trap 'rm -rf -- "$work"' EXIT
 mkdir "$work/bin"
 printf '#!/bin/bash\nprintf "%%s\\n" "$TEST_ARCH"\n' > "$work/bin/dpkg"
-printf '#!/bin/bash\nprintf "native:%%s\\n" "$*"\nexit "${TEST_EXIT:-0}"\n' > "$work/game app"
+printf '#!/bin/bash\nprintf "native:%%s\\n" "$*"\nprintf "game-callret:%%s\\ngame-dynarec:%%s\\n" "${BOX64_DYNAREC_CALLRET-unset}" "${BOX64_DYNAREC-unset}"\nexit "${TEST_EXIT:-0}"\n' > "$work/game app"
 printf '#!/bin/bash\nprintf "box64\\n"\nexec "$@"\n' > "$work/bin/box64"
 chmod +x "$work/bin/dpkg" "$work/bin/box64" "$work/game app"
 export PATH="$work/bin:$PATH"
@@ -41,8 +41,24 @@ if TEST_ARCH=amd64 TARGETARCH=arm64 bash "$ROOT/multiarch/docker/build/setup-arc
 fi
 printf 'PASS native setup skips Box64 and mismatched architecture fails\n'
 
-export BOX64_VERSION=0.4.5+20260913.a83b0ac-1
-export BOX64_REPO_COMMIT=4bc67b7174a7c1076d19ea4e9c81cc87460222a4
+for apphost in StardewModdingAPI 'Stardew Valley'; do
+    cp "$work/game app" "$work/$apphost"
+    for architecture in amd64 arm64; do
+        TEST_ARCH=$architecture BOX64_DYNAREC_CALLRET=2 BOX64_DYNAREC=1 \
+            bash "$ROOT/scripts/container/exec-game.sh" "$work/$apphost" 'argument with spaces' > "$work/output"
+        expected=2
+        [[ "$architecture" != arm64 ]] || expected=0
+        grep -qx "game-callret:$expected" "$work/output"
+        grep -qx 'game-dynarec:1' "$work/output"
+        grep -qx 'native:argument with spaces' "$work/output"
+    done
+done
+TEST_ARCH=arm64 BOX64_DYNAREC_CALLRET=2 bash "$ROOT/scripts/container/exec-game.sh" "$work/game app" > "$work/output"
+grep -qx 'game-callret:2' "$work/output"
+printf 'PASS CALLRET compatibility is ARM game-only, overrides unsafe mode, and preserves dynarec/arguments\n'
+
+export BOX64_VERSION=0.4.5+20260919.38f4831-1
+export BOX64_REPO_COMMIT=d444abc7fb30603e3129c338cd880dab1a2723f9
 grep -Fxq "ARG BOX64_VERSION=$BOX64_VERSION" "$ROOT/multiarch/docker/Dockerfile-steam"
 grep -Fxq "ARG BOX64_REPO_COMMIT=$BOX64_REPO_COMMIT" "$ROOT/multiarch/docker/Dockerfile-steam"
 for invalid in missing-version missing-snapshot branch-snapshot invalid-package wildcard-version; do

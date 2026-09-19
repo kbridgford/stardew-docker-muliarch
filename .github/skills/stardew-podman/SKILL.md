@@ -40,15 +40,21 @@ Validation and SMAPI installation also use Debian 13: the explicitly amd64
 The v4.14 tag selects a release line, not an immutable digest; record the
 resolved bases for each upgrade. `--no-cache` alone does not refresh base tags.
 The final stage selects `TARGETPLATFORM`; Box64 installation is ARM64-only.
-Box64 is pinned to `0.4.5+20260913.a83b0ac-1` using signed upstream repository
-snapshot `4bc67b7174a7c1076d19ea4e9c81cc87460222a4`. Setup requires an exact
+Box64 is pinned to `0.4.5+20260919.38f4831-1` using signed upstream repository
+snapshot `d444abc7fb30603e3129c338cd880dab1a2723f9`. Setup requires an exact
 version and commit, verifies the installed version, and never falls back to
 the rolling repository. Keep `BOX64_PACKAGE`, `BOX64_VERSION`, and
 `BOX64_REPO_COMMIT` consistent; changing this tested pin requires explicit
-intent and repeated acceptance. The newer rolling build stalled before ARM
-SMAPI startup during the Debian 13 upgrade; pinning restored the tested behavior.
+intent and repeated acceptance. The initial Debian 13 upgrade used an older
+package as a temporary fallback; the subsequent investigation enabled the
+newer package with a scoped compatibility setting.
 At launch, `scripts/container/exec-game.sh` checks actual package architecture,
 uses native amd64 or explicit Box64 dispatch, and rejects unsupported platforms.
+For ARM game apphosts `StardewModdingAPI` and `Stardew Valley`, it forces
+`BOX64_DYNAREC_CALLRET=0`, including over inherited CALLRET settings.
+This disables CALL/RET optimization, not dynarec. Native amd64 and unrelated
+executables remain unchanged; do not scatter duplicate settings across other
+surfaces or replace this with a global interpreter fallback.
 On an amd64 host, QEMU/binfmt runs ARM userspace; Box64 then runs the x86-64
 game inside it. Do not confuse these layers or infer architecture solely from
 host-default image inspection. On the validation host, `podman create
@@ -170,7 +176,57 @@ user data; there is no automatic rollback command.
 - Report incomplete or blocked platforms explicitly; never mark the matrix
   complete from one passing member.
 
-### Passed automated evidence: September 19, 2026
+### Passed newer-Box64 evidence: September 19, 2026
+
+The newer-package no-cache build passed in 359 seconds. Both actual runtime
+platforms passed architecture/package checks, normal-launcher startup/loading
+of all three baseline mods, HTTP, llvmpipe OpenGL 4.5, and the existing lifecycle
+matrix. ARM passed three independent full starts using the newer package and
+launcher-applied CALLRET=0 without a diagnostic override or timeout increase.
+Marker recreation/host ownership, TERM143, KILL137 and dead-readiness rejection
+passed. All nineteen recorded diagnostic/final test container IDs were verified
+absent; markers and staged credentials were removed. Protected inputs/state,
+backup, settings, audit, unrelated containers and the final manifest were stable.
+
+Private evidence: `.local/validation/box64-20260919-1/results.json`;
+lifecycle: `.local/validation/lifecycle-20260919T190412Z-750346-20234/`.
+The primary rollback for this change is Debian 13 with the older working Box64:
+`localhost/stardew-dev-d9e0cf953303:rollback-box64-a83b0ac-20260919`.
+Keep it distinct from the historical Debian 12 rollback. Diagnostic images and
+unattributed early anonymous volumes were retained, not pruned; final headless
+probes use tmpfs `/config` to prevent new anonymous-volume residue.
+
+### Diagnosing the packaged Box64 regression
+
+Read `docs/box64-startup-regression-2026-09-19.md` for package/snapshot identities,
+controlled results and upstream source references. September 16 `3ad88dc` was
+good and September 17 `92527de` was bad on one fixed ARM base. The narrowed
+interval has five commits. Newer-package mode 2 reproduced the busy pre-SMAPI
+stall, while modes 0 and 1 restored managed startup. A change to ARM dynablock
+in-use tracking for modes >= 2 is consistent with those results, but the exact
+instruction defect and native ARM behavior are not proven. No Box64 source
+was compiled or patched, and no upstream report was published.
+
+For an explicitly requested offline diagnostic, set `ARM_IMAGE_ID` to the
+full local ARM member ID from build evidence, not the manifest or host-default
+inspection. Run the negative control and fixed control separately:
+
+```bash
+bash tests/box64-regression.sh --image "$ARM_IMAGE_ID" --timeout 120 --env BOX64_DYNAREC_CALLRET=2
+bash tests/box64-regression.sh --image "$ARM_IMAGE_ID" --timeout 120 --env BOX64_DYNAREC_CALLRET=0
+bash tests/box64-regression-fixtures.sh
+```
+
+The harness deliberately invokes Box64 directly, bypassing launcher
+compatibility. It uses an existing immutable image, no network/host-state
+mounts, private bounded logs, and exact owned cleanup; it never builds,
+pulls or acquires games. Exit 0 means only an early SMAPI banner, 124 means
+the bounded diagnostic deadline, and other nonzero statuses are failures.
+Do not confuse a banner with completed mod/game readiness, add diagnostic
+flags to production defaults, or publish private logs/game content.
+Always follow a changed package/configuration with both-platform acceptance.
+
+### Historical Debian 13 upgrade evidence: September 19, 2026
 
 The Debian 13 upgrade's final no-cache build passed in 361 seconds, including
 the Trixie-based SMAPI installer. Both actual runtime platforms passed Debian

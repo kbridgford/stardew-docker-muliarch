@@ -26,9 +26,14 @@ The GUI base is `jlesage/baseimage-gui:debian-13-v4.14`; validation and SMAPI
 installation inherit an explicitly amd64 `debian:trixie-slim` stage. The game
 cache, SMAPI 4.0.8, and root mods are unchanged. The v4.14 tag selects a release
 line, not an immutable digest; record resolved bases for each acceptance run.
-ARM Box64 is pinned to `0.4.5+20260913.a83b0ac-1` from a signed immutable
-repository snapshot, avoiding the observed newer rolling-package startup
-regression. Native amd64 installs no Box64.
+ARM Box64 is pinned to `0.4.5+20260919.38f4831-1` from signed immutable
+repository snapshot `d444abc7fb30603e3129c338cd880dab1a2723f9`.
+The ARM game launcher forces `BOX64_DYNAREC_CALLRET=0` for the SMAPI and
+vanilla game apphosts, overriding inherited CALLRET values to avoid the
+observed newer-package startup stall under host QEMU. Dynarec remains enabled;
+unrelated executables are unchanged. Native amd64 installs no Box64.
+This is an application compatibility setting, not an upstream source patch.
+See the [investigation and offline reproducer](../docs/box64-startup-regression-2026-09-19.md).
 Build-only `--no-cache` bypasses image-layer reuse, never the local Steam cache.
 It does not prune images, refresh game files, or push anything.
 
@@ -100,6 +105,17 @@ manifest is retained locally as
 Existing state, backup, game cache, mods, and private settings were preserved.
 Human interaction, multiplayer, world and real-save checks remain optional
 and unverified; fresh authentication testing was not added to this upgrade.
+
+The subsequent Box64 investigation replaced the temporary old-package pin
+with the newer package plus the scoped CALLRET setting described above.
+Its fresh no-cache build completed in 359 seconds, and both-platform
+startup/mods/HTTP/GLX and lifecycle acceptance passed again, including three
+independent ARM starts. Evidence:
+`.local/validation/box64-20260919-1/results.json`.
+The Debian 13/older-Box64 rollback remains locally as
+`localhost/stardew-dev-d9e0cf953303:rollback-box64-a83b0ac-20260919`.
+The regression is configuration-dependent; the exact upstream instruction
+defect and native ARM behavior remain unproven.
 
 See [local development](../docs/local-development.md) for prerequisites,
 private authentication, isolated state, backup/rollback safeguards, limitations

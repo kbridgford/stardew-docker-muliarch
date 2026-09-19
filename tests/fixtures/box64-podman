@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$BOX64_MOCK/calls"
+id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+case "$1" in
+    info) printf '{"host":{"security":{"rootless":true},"arch":"arm64"}}\n' ;;
+    image)
+        printf '[{"Id":"%s","Architecture":"%s","Os":"linux"}]\n' "$3" "${MOCK_ARCH:-arm64}" ;;
+    run)
+        shift
+        while (( $# )); do
+            case "$1" in
+                --label) printf '%s\n' "${2#*=}" > "$BOX64_MOCK/owner"; shift ;;
+                --cidfile) printf '%s\n' "$id" > "$2" ;;
+            esac
+            shift
+        done
+        touch "$BOX64_MOCK/started"
+        [[ ${MOCK_CASE:-} != create-failure ]] || exit 42
+        printf '%s\n' "$id" ;;
+    inspect)
+        case "$*" in
+            *Config.Labels*)
+                if [[ ${MOCK_CASE:-} == ownership ]]; then printf 'other\n'; else cat "$BOX64_MOCK/owner"; fi ;;
+            *State.Running*) [[ ${MOCK_CASE:-} == exited ]] && printf 'false\n' || printf 'true\n' ;;
+            *) printf '{"Running":true}\n' ;;
+        esac ;;
+    logs)
+        case "${MOCK_CASE:-ready}" in
+            timeout|exited|interrupt) ;;
+            *) printf '[SMAPI] SMAPI 4.0.8 with Stardew Valley\n' ;;
+        esac ;;
+    exec) printf 'PID COMMAND\n' ;;
+    stop)
+        [[ ${MOCK_CASE:-} != cleanup ]] || exit 1
+        printf '%s\n' "$id" ;;
+    rm) printf '%s\n' "$id" ;;
+    container) exit 1 ;;
+    *) printf 'Unexpected mock command: %s\n' "$*" >&2; exit 1 ;;
+esac

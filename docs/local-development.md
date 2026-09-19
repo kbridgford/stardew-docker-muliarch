@@ -211,8 +211,8 @@ Architecture-gated Box64 installation follows the approach used by itzg's
 **Bedrock** image, rather than its Java-server image. Setup also checks that
 the declared build target matches the container package architecture.
 `BOX64_PACKAGE` selects the Box64 package (default `box64`). ARM builds pin
-`BOX64_VERSION=0.4.5+20260913.a83b0ac-1` and
-`BOX64_REPO_COMMIT=4bc67b7174a7c1076d19ea4e9c81cc87460222a4`.
+`BOX64_VERSION=0.4.5+20260919.38f4831-1` and
+`BOX64_REPO_COMMIT=d444abc7fb30603e3129c338cd880dab1a2723f9`.
 The repository commit addresses an immutable upstream snapshot containing the
 key, signed APT metadata, and package; the rolling repository removes older
 versions. APT signature/package verification and TLS remain enabled, and setup
@@ -220,12 +220,18 @@ checks the installed version exactly. Missing/malformed pins or unavailable
 packages fail; there is no fallback to a newer build. Native amd64 skips this
 entire installation.
 
-This pin preserves the previously validated emulator: the unpinned
-September 19 build stalled before ARM SMAPI startup during the Debian 13
-upgrade, while a controlled old-executable comparison reached SMAPI on the
-same Debian 13 image. Change the package/version/snapshot together only with
-explicit intent and both-platform acceptance; changing the GUI base must not
-silently advance the emulator again.
+The initial Debian 13 upgrade temporarily pinned the September 13 package.
+The subsequent investigation isolated a CALLRET-mode-dependent pre-SMAPI stall
+on newer packages under host QEMU. The ARM branch of `exec-game.sh` now forces
+`BOX64_DYNAREC_CALLRET=0` only for the `StardewModdingAPI` and `Stardew Valley`
+apphosts, overriding inherited CALLRET values. This disables CALL/RET
+optimization, not dynarec; native amd64 and unrelated ARM executables are
+unchanged. No production tuning knob or upstream source patch was added.
+Change the package/version/snapshot together only with explicit intent and
+both-platform acceptance; changing the GUI base must not silently advance the
+emulator again. See the [Box64 findings and reproducer](box64-startup-regression-2026-09-19.md)
+for the package boundary, causal controls, attribution limits, and offline
+diagnostic. An early SMAPI banner is not full game readiness.
 
 ### Compose compatibility
 
@@ -492,7 +498,39 @@ pre-cleanup manifest, and successful evidence-log checksums. Legacy cleanup
 completed with retained-state verification. The subsequent no-cache acceptance
 also passed; historical results below were not used as a substitute.
 
-### Debian 13 upgrade acceptance: September 19, 2026
+### Newer Box64 compatibility acceptance: September 19, 2026
+
+The subsequent package-only investigation and fix are documented in
+[Box64 startup findings](box64-startup-regression-2026-09-19.md). The adjacent
+tested boundary is September 16 good / September 17 bad. Explicit CALLRET=2
+reproduced the pre-SMAPI stall; modes 0 and 1 restored the early milestone.
+The shipped fix uses the newer September 19 package with game-scoped
+CALLRET=0, not the earlier fallback package or a Box64 source patch.
+The source interval contains five commits; exact instruction-level attribution
+and native ARM behavior remain unproven.
+
+A fresh no-cache dual-platform build passed in 359 seconds. Both actual
+platforms passed normal-launcher game/mod/HTTP startup, llvmpipe OpenGL 4.5,
+and the existing lifecycle matrix, without extending the 600-second deadline.
+ARM passed three independent full starts using the newer package and the
+launcher-applied setting. Exact marker recreation/host ownership, TERM143,
+KILL137 and dead-readiness rejection passed. Cache, mods, state, backup,
+settings, audit, unrelated containers and the published manifest were preserved.
+All nineteen recorded diagnostic/final test container IDs were confirmed absent.
+Diagnostic images and unattributed early anonymous volumes were retained, not
+pruned; the final diagnostic now uses temporary in-memory `/config`.
+
+Private evidence: `.local/validation/box64-20260919-1/results.json`;
+lifecycle: `.local/validation/lifecycle-20260919T190412Z-750346-20234/`.
+The final index storage ID is
+`89918efcc83f842fedb6cf5cfff53b57792fc4df4f2ccf8b30f643a8043c2aab`.
+The current rollback is Debian 13 with the older tested Box64:
+`localhost/stardew-dev-d9e0cf953303:rollback-box64-a83b0ac-20260919`.
+Keep this distinct from the historical Debian 12 rollback below. Existing
+startup/graphics/lifecycle limits still apply; no deeper gameplay or fresh
+authentication acceptance was added.
+
+### Historical Debian 13 upgrade acceptance: September 19, 2026
 
 All stages now use Debian 13. The final no-cache dual-platform build completed
 in 361 seconds, including SMAPI installation in the amd64 Trixie stage.
@@ -504,9 +542,10 @@ The first ARM attempt timed out before SMAPI at the unchanged 600-second
 startup limit. Its rolling Box64 dependency had advanced to
 `0.4.5+20260919.38f4831-1`. A same-image headless comparison reached SMAPI only
 with the previously validated executable; this diagnostic was not counted as
-game acceptance. After explicit approval, the signed snapshot/version pin
-described above was added and both images were rebuilt from fresh layers.
-The final image installs `0.4.5+20260913.a83b0ac-1` normally through verified
+game acceptance. After explicit approval, the old package and signed snapshot
+`4bc67b7174a7c1076d19ea4e9c81cc87460222a4` were pinned and both images were
+rebuilt from fresh layers.
+That upgrade's final image installed `0.4.5+20260913.a83b0ac-1` through verified
 APT metadata; it does not copy the diagnostic binary.
 
 | Platform | Actual runtime | Game/mod startup and HTTP | GLX | Lifecycle |
