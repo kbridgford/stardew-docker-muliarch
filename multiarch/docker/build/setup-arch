@@ -1,37 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 architecture=$(dpkg --print-architecture)
-if [[ -n "${TARGETARCH:-}" && "$TARGETARCH" != "$architecture" ]]; then
-    echo "Build architecture $TARGETARCH does not match container architecture $architecture." >&2
-    exit 1
-fi
+[[ "${TARGETARCH:?}" == "$architecture" ]] ||
+    { printf 'Build architecture does not match container architecture.\n' >&2; exit 1; }
 case "$architecture" in
-    amd64) echo 'Native amd64 image: Box64 is not required.'; exit 0 ;;
-    arm64) ;;
-    *) echo "Unsupported architecture: $architecture" >&2; exit 1 ;;
+    amd64|arm64) printf 'Native %s image: no game emulation.\n' "$architecture" ;;
+    *) printf 'Unsupported architecture: %s\n' "$architecture" >&2; exit 1 ;;
 esac
-package=${BOX64_PACKAGE:-box64}
-: "${BOX64_VERSION:?Set an exact tested Box64 package version.}"
-: "${BOX64_REPO_COMMIT:?Set an immutable Box64 repository commit.}"
-if [[ ! "$package" =~ ^box64(-[a-z0-9]+)*$ ||
-    ! "$BOX64_VERSION" =~ ^[0-9][a-zA-Z0-9.+:~-]*$ ||
-    ! "$BOX64_REPO_COMMIT" =~ ^[a-f0-9]{40}$ ]]; then
-    echo 'Invalid Box64 package, exact version, or repository commit.' >&2
+if command -v box64 >/dev/null; then
+    printf 'Unexpected Box64 in native runtime base.\n' >&2
     exit 1
 fi
-repository="https://raw.githubusercontent.com/ryanfortner/box64-debs/$BOX64_REPO_COMMIT"
-bash /install-packages.sh ca-certificates curl gnupg
-curl --fail --location "$repository/KEY.gpg" \
-    | gpg --dearmor --batch --yes -o /usr/share/keyrings/box64.gpg
-# The rolling repository removes older packages; retain its signed snapshot.
-printf 'deb [arch=arm64 signed-by=/usr/share/keyrings/box64.gpg] %s/debian/ ./\n' "$repository" \
-    > /etc/apt/sources.list.d/box64.list
-bash /install-packages.sh "$package=$BOX64_VERSION"
-command -v box64
-installed_version=$(dpkg-query -W -f='${Version}' "$package")
-if [[ "$installed_version" != "$BOX64_VERSION" ]]; then
-    echo 'Installed Box64 version does not match the requested pin.' >&2
-    exit 1
-fi
-printf 'Installed %s %s from snapshot %s\n' "$package" "$installed_version" "$BOX64_REPO_COMMIT"
-apt-get clean

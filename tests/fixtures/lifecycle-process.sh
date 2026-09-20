@@ -10,6 +10,7 @@ application_argv() {
     case "${argv[0]##*/}" in
         box64) [[ "${argv[1]:-}" == "$executable" ]] ;;
         aarch64-binfmt-P|qemu-aarch64|qemu-aarch64-static)
+            [[ "${argv[1]:-}" != "$executable" ]] || return 0
             # binfmt's P flag preserves argv[0] after the Box64 executable.
             [[ "${argv[1]:-}" == */box64 ]] || return 1
             [[ "${argv[2]:-}" == "$executable" ||

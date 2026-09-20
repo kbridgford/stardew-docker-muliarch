@@ -12,6 +12,7 @@ usage() {
         '       [--env BOX64_NAME=NUMBER ...]' \
         'Opt-in, offline headless SMAPI-banner diagnostic, NOT game readiness.' \
         'Calls Box64 directly, bypassing the game launcher compatibility settings.' \
+        'Legacy Box64 images only; native ValleyCore images are not supported.' \
         'Uses an existing immutable ARM image and container-only state; never builds or downloads.' \
         'Exit 0: managed banner observed; 124: deadline; other nonzero: failure.'
 }
@@ -46,6 +47,9 @@ metadata=$(podman image inspect "$requested_image")
 jq -e --arg id "$requested_image" 'length==1 and .[0].Id==$id and
     .[0].Architecture=="arm64" and .[0].Os=="linux"' <<< "$metadata" >/dev/null ||
     steam_die 'Diagnostic image must be the exact local Linux ARM64 member.'
+if jq -e '.[0].Config.Labels["io.stardew.game-runtime"] == "native"' <<< "$metadata" >/dev/null; then
+    steam_die 'Native runtime image: use startup/lifecycle acceptance, not the legacy Box64 diagnostic.'
+fi
 run_id="box64-probe-$(date -u +%Y%m%dT%H%M%SZ)-$BASHPID-$RANDOM"
 evidence="$ROOT/.local/validation/$run_id"
 validation_path "$evidence"

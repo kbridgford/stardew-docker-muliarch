@@ -160,9 +160,12 @@ bash "$probe" match-argv "$app" "$app"
 bash "$probe" match-argv "$app" /usr/local/bin/box64 "$app"
 bash "$probe" match-argv "$app" /usr/libexec/qemu-binfmt/aarch64-binfmt-P /usr/local/bin/box64 box64 "$app"
 bash "$probe" match-argv "$app" /usr/bin/qemu-aarch64-static /usr/local/bin/box64 "$app"
+bash "$probe" match-argv "$app" /usr/libexec/qemu-binfmt/aarch64-binfmt-P "$app" "$app"
+bash "$probe" match-argv "$app" /usr/bin/qemu-aarch64-static "$app"
 if bash "$probe" match-argv "$app" bash -c "$app"; then exit 1; fi
 if bash "$probe" match-argv "$app" /usr/local/bin/box64 "/stale$app"; then exit 1; fi
 if bash "$probe" match-argv "$app" /usr/bin/qemu-aarch64-static /usr/bin/bash "$app"; then exit 1; fi
+if bash "$probe" match-argv "$app" /usr/bin/qemu-aarch64-static "/stale$app" "$app"; then exit 1; fi
 printf 'PASS lifecycle exact native/Box64/QEMU argv; probe-shell and stale-path rejection\n'
 
 # Verify the signal probe rejects a stale start time without touching the PID.

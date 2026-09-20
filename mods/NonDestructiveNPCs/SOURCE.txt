@@ -1,0 +1,9 @@
+Non Destructive NPCs Redux 2.2.1, MIT. See LICENSE.
+Source commit: 4b88268acab805e5cb6ea5f4d0638cd6afaf3ac9
+https://github.com/ThaleMagnus/StardewValley/tree/4b88268acab805e5cb6ea5f4d0638cd6afaf3ac9/Non%20Destructive%20NPCs%20Redux/Non%20Destructive%20NPCs%20Redux%20Source
+
+Built without source changes in rootless mcr.microsoft.com/dotnet/sdk:8.0.414,
+using private Stardew Valley 1.6.15 / SMAPI 4.5.2 assembly references:
+dotnet build NonDestructiveNPCsRedux.csproj -c Release -p:GamePath=/work/game -p:EnableModDeploy=false -p:EnableModZip=false -p:EnableGameDebugging=false
+Declared packages: Pathoschild.Stardew.ModBuildConfig 4.4.0, Lib.Harmony 2.3.6.
+Do not distribute the proprietary game references used for compilation.

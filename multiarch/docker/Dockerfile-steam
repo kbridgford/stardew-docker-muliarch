@@ -1,4 +1,6 @@
 ARG TARGETPLATFORM
+ARG TARGETARCH
+ARG SMAPI_VERSION=4.5.2
 FROM scratch AS steam
 FROM scratch AS devtools
 FROM scratch AS mods
@@ -12,17 +14,36 @@ RUN bash /scripts/validate-steam-cache.sh /cache/steam
 FROM validated AS game
 RUN mkdir -p /data/Stardew && cp -a /cache/steam/game /data/Stardew/game
 ENV GAME_PATH=/data/Stardew/game
-ARG SMAPI_VERSION=4.0.8
+ARG SMAPI_VERSION
+ARG SMAPI_SHA256=dd01ddca7b566bfe0d3b3d2d03833496abc56c53da976241f2ab443f5484acc4
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip libicu76 && apt-get clean
 COPY --from=devtools container/install-smapi.sh /install-smapi.sh
 RUN bash /install-smapi.sh
+COPY --from=devtools lib/native-game.sh /scripts/lib/native-game.sh
+COPY --from=mods / /root-mods/
+RUN for mod in ChatCommands FriendsForever NoFenceDecay; do \
+        test -s "/root-mods/$mod/manifest.json" || \
+        { echo "Missing bundled mod $mod. See docs/mod-updates.md."; exit 1; }; \
+    done
+RUN bash -ec 'source /scripts/lib/native-game.sh; native_mods "$GAME_PATH" /root-mods' && \
+    cp -a /root-mods/. "$GAME_PATH/Mods/"
+
+FROM game AS game-amd64
+RUN mkdir -p /data/.steam && cp -a /cache/steam/steam-sdk/. /data/.steam/
+
+FROM game AS game-arm64
+ARG SMAPI_VERSION
+ARG VALLEYCORE_VERSION=1.6.15g
+ARG VALLEYCORE_SHA256=e5949546b0574aaa7b8bf87939569c3cd4d1336857717d01aa9fb88bb3d7c467
+COPY --from=devtools container/prepare-valleycore.sh /scripts/container/prepare-valleycore.sh
+RUN bash /scripts/container/prepare-valleycore.sh && mkdir -p /data/.steam
+
+FROM game-${TARGETARCH} AS prepared
 
 # GLX support is required; the earlier v4.6 base did not provide it.
 FROM --platform=$TARGETPLATFORM docker.io/jlesage/baseimage-gui:debian-13-v4.14
 ARG TARGETARCH
-ARG BOX64_PACKAGE=box64
-ARG BOX64_VERSION=0.4.5+20260919.38f4831-1
-ARG BOX64_REPO_COMMIT=d444abc7fb30603e3129c338cd880dab1a2723f9
+LABEL io.stardew.game-runtime="native"
 ENV APP_NAME=StardewValley GAME_PATH=/data/Stardew/game STARDEW_MODDED=1 \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 RUN case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac && \
@@ -33,11 +54,10 @@ COPY build/setup-arch /build/setup-arch
 RUN bash /build/setup-arch
 RUN bash /install-packages.sh \
     xterm gettext-base jq procps locales libasound2t64 libgl1 libglu1-mesa \
-    libicu76 libssl3t64 zlib1g libstdc++6 mesa-utils
-COPY --from=game /data/Stardew/game/ /data/Stardew/game/
-COPY --from=game /cache/steam/steam-sdk/ /data/.steam/
-COPY --from=mods / /data/Stardew/game/Mods/
+    libicu76 libssl3t64 zlib1g libstdc++6 mesa-utils libsdl2-2.0-0 libopenal1
+COPY --from=prepared /data/ /data/
 COPY --from=devtools container/startapp.sh /startapp.sh
-COPY --from=devtools container/exec-game.sh /opt/stardew/exec-game.sh
+COPY --from=devtools container/exec-game.sh /opt/stardew/container/exec-game.sh
+COPY --from=devtools lib/native-game.sh /opt/stardew/lib/native-game.sh
 RUN test -s "/data/Stardew/game/Mods/Always On Server/manifest.json" && \
-    chmod +x /startapp.sh /opt/stardew/exec-game.sh && chown -R 1000:1000 /data
+    chmod +x /startapp.sh /opt/stardew/container/exec-game.sh && chown -R 1000:1000 /data

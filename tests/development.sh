@@ -7,7 +7,7 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cases=(cache-valid cache-corrupt cache-missing cache-symlink cache-contamination cache-permissions
     cache-schema cache-extra-file cache-symlink-change publication recovery
     downloader-reuse downloader-failure downloader-refresh
-    compose-parity compose-empty missing-build build-matrix build-failure build-lock
+    compose-parity compose-empty mod-defaults missing-build build-matrix build-failure build-lock
     buildx-manifest buildx-failure buildx-invalid buildx-preflight build-no-cache runtime-platform runtime-manifest-missing
     runtime-manifest-invalid manifest-shapes runtime-conflict rejected-targets irrelevant-options state-isolation state-paths migration-lock
     private-env private-paths run-command run-failure smoke-cleanup ownership)
@@ -173,6 +173,27 @@ case "$1" in
             [[ "${SETTINGS[UNLIMITED_PLAYERS_PLAYER_LIMIT]}" == 12 ]]
             [[ "${SETTINGS[VNC_PASSWORD]}" == synthetic-password ]]
         done ;;
+    mod-defaults)
+        [[ ! -e "$ROOT/mods/Crops Anytime Anywhere/config.json.template" ]]
+        [[ ! -e "$ROOT/mods/TimeSpeed/config.json.template" ]]
+        ROOT=$test_repo
+        source "$ROOT/scripts/lib/podman-steam.sh"
+        declare -A SETTINGS=() PRIVATE_ENV=([VNC_PASSWORD]=synthetic-password)
+        select_target multiarch
+        compose_environment
+        [[ "${SETTINGS[ENABLE_TIMESPEED_MOD]}" == false ]]
+        [[ "${SETTINGS[ENABLE_CROPSANYTIMEANYWHERE_MOD]}" == false ]]
+        for key in "${!SETTINGS[@]}"; do
+            case "$key" in TIME_SPEED_*|CROPS_ANYTIME_ANYWHERE_*) exit 1 ;; esac
+        done
+        for key in TIME_SPEED_DEFAULT_TICK_LENGTH CROPS_ANYTIME_ANYWHERE_FARM_ANY_LOCATION; do
+            PRIVATE_ENV["$key"]=true
+            if (compose_environment) > "$work/error" 2>&1; then exit 1; fi
+            grep -Fq "Retired setting: $key." "$work/error"
+            unset 'PRIVATE_ENV[$key]'
+            if (export "$key=true"; compose_environment) > "$work/error" 2>&1; then exit 1; fi
+            grep -Fq "Retired setting: $key." "$work/error"
+        done ;;
     compose-empty)
         ROOT=$test_repo
         source "$ROOT/scripts/lib/podman-steam.sh"
@@ -197,7 +218,9 @@ case "$1" in
         [[ "$(grep -c -- "--build-context mods=$test_repo/mods" "$MOCK_PODMAN_CALLS")" == 1 ]]
         grep -qx '        mods: ../mods' "$test_repo/multiarch/docker-compose-steam.yml"
         grep -qx 'FROM scratch AS mods' "$test_repo/multiarch/docker/Dockerfile-steam"
-        grep -qx 'COPY --from=mods / /data/Stardew/game/Mods/' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -Fxq 'COPY --from=mods / /root-mods/' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -Fxq 'FROM game-${TARGETARCH} AS prepared' "$test_repo/multiarch/docker/Dockerfile-steam"
+        grep -Fxq 'COPY --from=prepared /data/ /data/' "$test_repo/multiarch/docker/Dockerfile-steam"
         grep -Fxq 'FROM --platform=linux/amd64 docker.io/library/debian:trixie-slim AS validated' "$test_repo/multiarch/docker/Dockerfile-steam"
         grep -Fxq 'FROM validated AS game' "$test_repo/multiarch/docker/Dockerfile-steam"
         grep -Fxq 'FROM --platform=$TARGETPLATFORM docker.io/jlesage/baseimage-gui:debian-13-v4.14' "$test_repo/multiarch/docker/Dockerfile-steam"

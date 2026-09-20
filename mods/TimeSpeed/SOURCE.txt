@@ -1,0 +1,7 @@
+TimeSpeed 2.8.1, GPL-3.0. See LICENSE.
+Complete upstream source:
+https://github.com/cantorsdust/StardewMods/tree/2c98ec22bb8c037d2afd28058baab26dcf300b81
+Release tag: timespeed/2.8.1
+Use the complete repository and its shared build files, not only the TimeSpeed
+directory. Build with the repository's documented game/SMAPI references.
+The distributed binary was supplied from Nexus mod 169.

@@ -20,20 +20,22 @@ From the repository root:
 `build multiarch` invokes `podman buildx build --platform linux/amd64,linux/arm64`
 with a local `--manifest`, not a single-platform tag. It verifies exactly both
 platforms before replacing the project image name. Nothing is pushed to a registry.
-The final runtime stage uses `TARGETPLATFORM`; Box64 installation is skipped on
-amd64 and required on arm64.
+The final runtime stage uses `TARGETPLATFORM`; game/SMAPI execution is native
+on both platforms, without Box64.
 The GUI base is `jlesage/baseimage-gui:debian-13-v4.14`; validation and SMAPI
 installation inherit an explicitly amd64 `debian:trixie-slim` stage. The game
-cache, SMAPI 4.0.8, and root mods are unchanged. The v4.14 tag selects a release
+cache is unchanged; both platforms use SMAPI 4.5.2 and updated root mod inputs.
+The v4.14 tag selects a release
 line, not an immutable digest; record resolved bases for each acceptance run.
-ARM Box64 is pinned to `0.4.5+20260919.38f4831-1` from signed immutable
-repository snapshot `d444abc7fb30603e3129c338cd880dab1a2723f9`.
-The ARM game launcher forces `BOX64_DYNAREC_CALLRET=0` for the SMAPI and
-vanilla game apphosts, overriding inherited CALLRET values to avoid the
-observed newer-package startup stall under host QEMU. Dynarec remains enabled;
-unrelated executables are unchanged. Native amd64 installs no Box64.
-This is an application compatibility setting, not an upstream source patch.
-See the [investigation and offline reproducer](../docs/box64-startup-regression-2026-09-19.md).
+ARM preparation overlays the checksum-pinned ValleyCore `1.6.15g` bundle onto a
+private game copy, validates managed headers and native ELF architecture, and
+quarantines unsupported x86 native libraries outside the game search path.
+It does not patch the game cache or root mod files. Native SDL2/OpenAL are
+installed; no x86 Steam SDK or guessed ARM store replacement is supplied.
+ValleyCore's .NET 6.0.32 is out of support. Store integration, multiplayer and
+physical ARM performance remain unverified.
+See the [historical Box64 investigation](../docs/box64-startup-regression-2026-09-19.md)
+for the retired runtime and retained rollback images.
 Build-only `--no-cache` bypasses image-layer reuse, never the local Steam cache.
 It does not prune images, refresh game files, or push anything.
 
@@ -60,14 +62,16 @@ never download Steam/game files.
 The local `docker/` build context owns the Dockerfile and ARM setup script.
 Named contexts supply the shared game cache (`steam`), common Bash helpers
 (`devtools`), and repository-root `mods/` (`mods`). Their paths are `src/steam`,
-`scripts`, and `mods`, respectively; consolidation leaves the cache and shared
-mods unchanged. The Compose definition is standalone and owns its environment, ports
+`scripts`, and `mods`, respectively. The replacement packages are versioned in
+`mods/`; see [mod inputs](../docs/mod-updates.md) for provenance. Crops Anytime
+Anywhere and TimeSpeed use mod defaults, not the retired environment templates.
+The Compose definition is standalone and owns its environment, ports
 and save/config mounts; it does not extend another project's service. No game
 copy or external symlink traversal through Docker `COPY` is required.
 
 On an x86 host, QEMU/binfmt provides ARM64 container execution. Inside the
-image, startup detects the package architecture and uses Box64 for the x86_64
-game only on ARM64; amd64 containers run natively. SMAPI installation runs in an explicit
+image, startup checks the apphost ELF architecture and directly executes the
+matching native game. SMAPI installation runs in an explicit
 amd64 stage using its bundled runtime. These mechanisms require separate
 validation; emulated ARM userspace success is not game readiness.
 The longer startup bound accommodates the observed ARM64-under-QEMU run,
@@ -106,8 +110,8 @@ Existing state, backup, game cache, mods, and private settings were preserved.
 Human interaction, multiplayer, world and real-save checks remain optional
 and unverified; fresh authentication testing was not added to this upgrade.
 
-The subsequent Box64 investigation replaced the temporary old-package pin
-with the newer package plus the scoped CALLRET setting described above.
+The subsequent, now historical Box64 investigation replaced the temporary
+old-package pin with a newer package plus a game-scoped CALLRET setting.
 Its fresh no-cache build completed in 359 seconds, and both-platform
 startup/mods/HTTP/GLX and lifecycle acceptance passed again, including three
 independent ARM starts. Evidence:
@@ -120,3 +124,14 @@ defect and native ARM behavior remain unproven.
 See [local development](../docs/local-development.md) for prerequisites,
 private authentication, isolated state, backup/rollback safeguards, limitations
 and acceptance checks. No privileged fallback or implicit Steam download is used.
+
+The subsequent native migration passed a fresh dual-platform build and the
+same startup/graphics/lifecycle boundary, including all nine updated/retained
+mod identities on both platforms and current-schema default Crops/TimeSpeed
+configs. ARM guest apphosts and mapped runtime libraries were verified as
+ARM64 under host QEMU, without Box64. Evidence:
+`.local/validation/native-arm-20260919-3/results.json`.
+The pre-ValleyCore rollback remains
+`localhost/stardew-dev-d9e0cf953303:rollback-pre-valleycore-20260919`.
+Protected data and unrelated workloads were preserved; mod updates are
+intentional. This does not certify gameplay or physical ARM hardware.

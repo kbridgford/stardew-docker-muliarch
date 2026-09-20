@@ -12,7 +12,7 @@ cp "$ROOT/tests/fixtures/box64-podman" "$work/bin/podman"
 chmod +x "$work/bin/podman"
 export PATH="$work/bin:$PATH"
 image=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-for scenario in ready timeout exited create-failure interrupt ownership cleanup wrong-arch bad-image bad-setting bad-timeout; do
+for scenario in ready timeout exited create-failure interrupt ownership cleanup wrong-arch native-image bad-image bad-setting bad-timeout; do
     export BOX64_MOCK="$work/$scenario" MOCK_CASE="$scenario" MOCK_ARCH=arm64
     mkdir "$BOX64_MOCK"
     arguments=(--image "$image" --timeout 1 --env BOX64_DYNAREC_BIGBLOCK=0)
@@ -59,7 +59,7 @@ for scenario in ready timeout exited create-failure interrupt ownership cleanup 
         ownership|cleanup)
             jq -e '.status!=0 and .cleanup_verified==false' "$evidence/result.json" >/dev/null
             if grep -q '^rm ' "$BOX64_MOCK/calls"; then exit 1; fi ;;
-        wrong-arch)
+        wrong-arch|native-image)
             if grep -q '^run ' "$BOX64_MOCK/calls"; then exit 1; fi ;;
         bad-*) [[ ! -e "$BOX64_MOCK/calls" ]] ;;
     esac

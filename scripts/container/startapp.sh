@@ -55,4 +55,4 @@ if [ ! -x "$executable" ]; then
 fi
 cd "$GAME_PATH"
 printf 'Starting %s\n' "$(basename "$executable")"
-exec /opt/stardew/exec-game.sh "$executable"
+exec /opt/stardew/container/exec-game.sh "$executable" "$@"

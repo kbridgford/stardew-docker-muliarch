@@ -49,8 +49,8 @@ The registration must be enabled and contain flag `F`; the container should
 print `aarch64`. This proves emulated userspace works, **not that Stardew works**.
 The observed local host passed this probe after operator installation.
 
-QEMU executes ARM64 container userspace on the x86 host. Box64 inside the
-ARM64 image executes the x86_64 game. These are different layers. The
+QEMU executes ARM64 container userspace on the x86 host. The ARM64 image runs
+native ARM64 game/SMAPI apphosts through ValleyCore, without Box64. The
 SMAPI installer runs in an explicitly amd64 build stage, using its bundled
 runtime; no ARM64 SDK is installed into an x86 image. A native ARM build host
 also needs amd64 emulation for this installer stage.
@@ -129,7 +129,7 @@ an unmanaged build.
 | Project | Runtime platform | Intended contents |
 |---|---|---|
 | `multiarch` | linux/amd64 | SMAPI/mods, inherited GUI, native x86-64 apphost |
-| `multiarch` | linux/arm64 (default) | Same SMAPI/mods and GUI, x86-64 apphost through Box64 |
+| `multiarch` | linux/arm64 (default) | Same SMAPI/mods and GUI, native ARM64 ValleyCore apphost |
 
 ```bash
 ./scripts/podman-steam.sh doctor multiarch
@@ -159,8 +159,9 @@ instead of redirecting to `multiarch`.
 `multiarch/docker/` owns the build context and `Dockerfile-steam`. Named
 contexts provide the published vanilla cache (`steam=src/steam`), common Bash
 helpers (`devtools=scripts`), and shared mods (`mods=mods`). Edit repository-root
-`mods/` for mod changes. Consolidation leaves those shared mods and the local
-Steam cache unchanged. The build does not use the repository root as its main
+`mods/` for mod changes. The replacement packages described in
+[mod inputs](mod-updates.md) are versioned in those folders; original download
+archives remain ignored. The build does not use the repository root as its main
 context, duplicate the game, or depend on out-of-context symlink traversal.
 
 The Dockerfile copies vanilla game/SDK files before applying
@@ -168,10 +169,10 @@ mods and the common Steam launcher. Host cache contents never become a writable
 game mount. Editing a launcher or a mod template does not trigger Steam
 acquisition. The Dockerfile's ignore file excludes unrelated local inputs.
 
-Base images, APT packages, SMAPI releases, and emulator packages can still
+Base images, APT packages, SMAPI releases, and ValleyCore can still
 require network access. This is **Steam/game-download-free building**, not a
 fully offline or fully reproducible build. SMAPI remains version-selected by
-`SMAPI_VERSION` (default 4.0.8); its installer runs without prompts and expected
+`SMAPI_VERSION` (default 4.5.2), aligned with the pinned ARM bundle; its installer runs without prompts and expected
 artifacts must exist. Compatibility with a newly acquired game needs real
 validation rather than inferring success from an installer exit code.
 
@@ -197,41 +198,45 @@ installation uses jlesage's own temporary account initialization/cleanup helpers
 and a CA bundle from the validated Debian stage; APT signatures and checksums
 remain enabled. The inspected v4.14 account definitions changed upstream,
 but its package-init helper still provides `init_env` and `cleanup_env`.
-Both Debian 13 builds succeeded with the existing wrapper; no launcher,
-SMAPI-version, mod, or cache changes were needed for the build.
+The earlier Debian 13 upgrade used this same wrapper. Native game preparation
+is a separate subsequent change; it does not modify the source game cache.
 
 `scripts/container/exec-game.sh` detects the actual container architecture with
-`dpkg --print-architecture`. On amd64 it executes the apphost natively. On arm64
-it requires Box64 and explicitly executes the x86_64 apphost through it. Unknown
-architectures and missing Box64 fail rather than falling back silently. The
+`dpkg --print-architecture` and validates the actual ELF architecture. Both
+platforms directly execute their native apphosts; wrong architecture, unsupported
+platforms and missing executables fail without an emulator fallback. The
 vanilla Linux apphost is `Stardew Valley` (with a space), not the game's shell
 wrapper `StardewValley`.
 
-Architecture-gated Box64 installation follows the approach used by itzg's
-**Bedrock** image, rather than its Java-server image. Setup also checks that
-the declared build target matches the container package architecture.
-`BOX64_PACKAGE` selects the Box64 package (default `box64`). ARM builds pin
-`BOX64_VERSION=0.4.5+20260919.38f4831-1` and
-`BOX64_REPO_COMMIT=d444abc7fb30603e3129c338cd880dab1a2723f9`.
-The repository commit addresses an immutable upstream snapshot containing the
-key, signed APT metadata, and package; the rolling repository removes older
-versions. APT signature/package verification and TLS remain enabled, and setup
-checks the installed version exactly. Missing/malformed pins or unavailable
-packages fail; there is no fallback to a newer build. Native amd64 skips this
-entire installation.
+The amd64 preparation stage installs SMAPI 4.5.2, checks mod identities, and
+produces separate outputs. AMD64 keeps its original runtime and Steam SDK.
+ARM64 overlays ValleyCore `1.6.15g`, validates managed PE/CLR metadata, and changes
+only the supported AMD64 Machine marker to ARM64. Valid AnyCPU/32-bit assemblies
+remain unchanged for SMAPI's rewriter. Sources under `src/steam` and `mods/` are
+never architecture-patched. Mod manifests may contain JSON comments and a BOM;
+validation preserves quoted strings and rejects malformed or ambiguous IDs.
 
-The initial Debian 13 upgrade temporarily pinned the September 13 package.
-The subsequent investigation isolated a CALLRET-mode-dependent pre-SMAPI stall
-on newer packages under host QEMU. The ARM branch of `exec-game.sh` now forces
-`BOX64_DYNAREC_CALLRET=0` only for the `StardewModdingAPI` and `Stardew Valley`
-apphosts, overriding inherited CALLRET values. This disables CALL/RET
-optimization, not dynarec; native amd64 and unrelated ARM executables are
-unchanged. No production tuning knob or upstream source patch was added.
-Change the package/version/snapshot together only with explicit intent and
-both-platform acceptance; changing the GUI base must not silently advance the
-emulator again. See the [Box64 findings and reproducer](box64-startup-regression-2026-09-19.md)
-for the package boundary, causal controls, attribution limits, and offline
-diagnostic. An early SMAPI banner is not full game readiness.
+Pinned archive SHA-256:
+
+- SMAPI 4.5.2 installer:
+  `dd01ddca7b566bfe0d3b3d2d03833496abc56c53da976241f2ab443f5484acc4`.
+- ValleyCore-SMAPI 1.6.15g:
+  `e5949546b0574aaa7b8bf87939569c3cd4d1336857717d01aa9fb88bb3d7c467`.
+
+Native SDL2/OpenAL packages supply ARM audio/window dependencies. Known x86
+game libraries are quarantined outside the ARM game search path in
+`/data/Stardew/unsupported-x86`, and x86 Steam SDK files are not copied to ARM.
+There are no fake store API replacements. Startup does not certify Steam/Galaxy
+integration, multiplayer, lazy native imports, audio hardware, or real saves.
+ValleyCore bundles **out-of-support .NET 6.0.32**; runtime modernization is
+separate work, not a silent dependency update. ARM-under-QEMU validation is not
+a physical ARM hardware or performance result.
+
+The native image has no Box64 package, repository or CALLRET override.
+[Box64 findings](box64-startup-regression-2026-09-19.md) and retained images
+remain historical rollback evidence. `tests/box64-regression.sh` rejects new
+native-labeled images; it is not a native-runtime test. The current rollback is
+`localhost/stardew-dev-d9e0cf953303:rollback-pre-valleycore-20260919`.
 
 ### Compose compatibility
 
@@ -250,6 +255,25 @@ The Podman helper reads the existing flat Compose environment list without
 executing it as shell code. This keeps defaults and the host aliases
 `ENABLE_AUTOLOADGAME`/`ENABLE_UNLIMITEDPLAYERS` consistent. Unsupported YAML or
 interpolation syntax fails explicitly; it is not a general YAML parser.
+
+### Optional mod configuration defaults
+
+Crops Anytime Anywhere and TimeSpeed use their own defaults when enabled on a
+fresh installation. The container does not generate configuration for either
+mod or translate the old settings into newer schemas. Their enable switches,
+`ENABLE_CROPSANYTIMEANYWHERE_MOD` and `ENABLE_TIMESPEED_MOD`, remain supported
+and default to `false`. Other mods retain their existing configuration handling.
+
+The old `CROPS_ANYTIME_ANYWHERE_*` and `TIME_SPEED_*` settings are retired.
+Remove them from exported host variables and private env files; the Podman
+helper rejects them explicitly rather than silently ignoring customization.
+Standalone Compose no longer forwards these settings either.
+
+Existing nonempty `config.json` files are left untouched. This is not an
+automatic reset of user configuration: upstream defaults apply only when a
+mod creates a new configuration. Defaults belong to the installed mod version;
+the project no longer promises the old crop rules, time speed, festival policy
+or host-only time controls for these two optional mods.
 
 ## 4. Run in isolated development state
 
@@ -498,7 +522,49 @@ pre-cleanup manifest, and successful evidence-log checksums. Legacy cleanup
 completed with retained-state verification. The subsequent no-cache acceptance
 also passed; historical results below were not used as a substitute.
 
-### Newer Box64 compatibility acceptance: September 19, 2026
+### Native ARM64 and updated mods: September 19, 2026
+
+The final fresh two-platform build and automated acceptance passed with
+SMAPI 4.5.2 and the updated root `mods/` folders. ARM uses native ValleyCore
+apphosts/runtime, not Box64; the validation host still uses QEMU for ARM
+container userspace.
+
+| Runtime | Default/all-enabled mods | Guest apphost/runtime mappings | HTTP/GLX | Lifecycle |
+|---|---|---|---|---|
+| linux/amd64 | 3 / 9 loaded by identity | Native x86-64 | Passed; llvmpipe OpenGL 4.5 | Passed |
+| linux/arm64 under QEMU | 3 / 9 loaded by identity | Native ARM64, no Box64 or quarantined x86 mappings | Passed; llvmpipe OpenGL 4.5 | Passed |
+
+Crops Anytime Anywhere and TimeSpeed created their current-schema default
+configs on both platforms without old environment-template translation.
+Friends Forever loaded under its supplied embedded `IsaacS.FriendsForever`
+identity/version 1.2.3; the operator-confirmed archive is advertised as 1.2.11.
+That metadata discrepancy is preserved, not relabeled. See
+[mod inputs and provenance](mod-updates.md).
+
+Repeated independent ARM launches, marker recreation/host ownership, TERM143,
+KILL137, dead-readiness rejection and exact owned cleanup passed. The final
+manifest was stable, all recorded acceptance containers were absent, and
+staged credentials/lifecycle markers were removed. The Steam cache, normal and
+legacy state, backup, private settings, historical audit and unrelated workloads
+were unchanged. Mod changes are intentional and separately checksummed.
+
+Final private evidence:
+`.local/validation/native-arm-20260919-3/results.json`; its `lifecycle-path`
+points to the final lifecycle matrix. The preceding complete successful matrix
+is retained under `.local/validation/native-arm-20260919-2/`. Earlier rejected
+mod evidence and baseline comparisons remain under `native-arm-20260919-1/`.
+The final rebuild includes strict JSON-comment token separation; the full
+matrix was repeated after that guard changed.
+
+Preparation/native dispatch fixtures, 42 development cases, readiness/lifecycle
+fixtures, legacy Box64 guards, real named-context checks, syntax and ShellCheck
+passed. Imported upstream translation files retain their original line endings.
+No gameplay, world creation, real-save load, multiplayer/store integration,
+fresh VNC authentication or physical ARM performance is certified. Headless
+audio initialization errors also occurred in the previous Box64 baseline.
+The .NET 6 runtime remains out of support.
+
+### Historical newer Box64 compatibility acceptance: September 19, 2026
 
 The subsequent package-only investigation and fix are documented in
 [Box64 startup findings](box64-startup-regression-2026-09-19.md). The adjacent
@@ -524,7 +590,7 @@ Private evidence: `.local/validation/box64-20260919-1/results.json`;
 lifecycle: `.local/validation/lifecycle-20260919T190412Z-750346-20234/`.
 The final index storage ID is
 `89918efcc83f842fedb6cf5cfff53b57792fc4df4f2ccf8b30f643a8043c2aab`.
-The current rollback is Debian 13 with the older tested Box64:
+That investigation's rollback is Debian 13 with the older tested Box64:
 `localhost/stardew-dev-d9e0cf953303:rollback-box64-a83b0ac-20260919`.
 Keep this distinct from the historical Debian 12 rollback below. Existing
 startup/graphics/lifecycle limits still apply; no deeper gameplay or fresh

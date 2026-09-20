@@ -103,6 +103,14 @@ resolve_value() {
 
 compose_environment() {
     local line active=no key expression source operator fallback
+    local -a environment_keys
+    mapfile -t environment_keys < <(compgen -e)
+    for key in "${environment_keys[@]}" "${!PRIVATE_ENV[@]}"; do
+        case "$key" in
+            TIME_SPEED_*|CROPS_ANYTIME_ANYWHERE_*)
+                steam_die "Retired setting: $key. Remove it; TimeSpeed and Crops Anytime Anywhere now use mod defaults or an existing config.json." ;;
+        esac
+    done
     local assignment='^      - ([A-Z][A-Z0-9_]*)=(.*)$'
     local substitution='^\$\{([A-Z][A-Z0-9_]*)(-|:\?)(.*)\}$'
     SETTINGS=()

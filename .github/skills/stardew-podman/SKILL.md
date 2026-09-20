@@ -1,6 +1,6 @@
 ---
 name: stardew-podman
-description: Build, run, smoke-test, or diagnose the multiarch Steam project using a local game cache, rootless Podman, native amd64, and ARM64 with Box64.
+description: Build, run, smoke-test, or diagnose the multiarch Steam project using a local game cache, rootless Podman, native amd64, and native ARM64 with ValleyCore.
 ---
 
 # Stardew local Podman workflow
@@ -14,16 +14,30 @@ handwritten parallel copies of runtime settings.
 | Project | Runtime platform | Behavior |
 |---|---|---|
 | `multiarch` | linux/amd64 | SMAPI/mods, inherited GUI, native x86-64 apphost |
-| `multiarch` | linux/arm64 (default) | Same SMAPI/mods and GUI; x86-64 apphost through Box64 |
+| `multiarch` | linux/arm64 (default) | Same SMAPI/mods and GUI; native ARM64 ValleyCore apphost |
 
 GOG, the vanilla project, custom x11vnc variant, and old helper target names
-are retired, without compatibility aliases. Never substitute a native run
+are retired, without compatibility aliases. Never substitute an amd64 run
 for a blocked requested ARM64 run.
 
 The sole build context is `multiarch/docker/`. Named inputs are
 `steam=src/steam`, `devtools=scripts`, and `mods=mods`. Edit repository-root
 `mods/`; do not recreate duplicate legacy payloads, use the repository root as
 the main context, or COPY through an out-of-context symlink.
+Read `docs/mod-updates.md` for the effective packages and provenance.
+The operator requested that ChatCommands, NoFenceDecay and FriendsForever
+replacements be versioned directly in `mods/`. Original download archives,
+game files and private settings remain ignored. Redistribution-permission gaps
+are not resolved by versioning these files; never infer permission to publish.
+Missing bundled manifests fail builds. There is no separate mod-pack workflow.
+Keep the existing directory names
+so enable variables remain compatible. Preserve AutoLoadGame 1.0.3 and
+UnlimitedPlayers 2024.4.16 unless a verified update is explicitly selected.
+Crops Anytime Anywhere and TimeSpeed use upstream defaults on fresh config,
+not translated old behavior; their former environment settings are rejected by
+the helper. Existing nonempty configs and all mod enable defaults are preserved.
+Friends Forever's supplied ZIP is advertised as 1.2.11 but embeds 1.2.3 and
+`IsaacS.FriendsForever`; preserve and report that discrepancy, never relabel it.
 The standalone Compose file is `multiarch/docker-compose-steam.yml`; the helper
 reads its environment defaults without executing them as shell code.
 
@@ -32,31 +46,30 @@ staged local manifest. It validates both members before updating the final name
 and never pushes game-containing images. Failed builds preserve the prior
 published manifest. `--no-cache` is build-only: it bypasses image-layer reuse,
 not the local Steam files; it neither refreshes the game nor prunes storage.
-OS, base-image, SMAPI, and emulator inputs can still require networking.
+OS, base-image, SMAPI, and ValleyCore inputs can still require networking.
 
 The runtime base is `docker.io/jlesage/baseimage-gui:debian-13-v4.14`.
 Validation and SMAPI installation also use Debian 13: the explicitly amd64
 `validated` stage starts from `debian:trixie-slim`, and `game` inherits it.
 The v4.14 tag selects a release line, not an immutable digest; record the
 resolved bases for each upgrade. `--no-cache` alone does not refresh base tags.
-The final stage selects `TARGETPLATFORM`; Box64 installation is ARM64-only.
-Box64 is pinned to `0.4.5+20260919.38f4831-1` using signed upstream repository
-snapshot `d444abc7fb30603e3129c338cd880dab1a2723f9`. Setup requires an exact
-version and commit, verifies the installed version, and never falls back to
-the rolling repository. Keep `BOX64_PACKAGE`, `BOX64_VERSION`, and
-`BOX64_REPO_COMMIT` consistent; changing this tested pin requires explicit
-intent and repeated acceptance. The initial Debian 13 upgrade used an older
-package as a temporary fallback; the subsequent investigation enabled the
-newer package with a scoped compatibility setting.
-At launch, `scripts/container/exec-game.sh` checks actual package architecture,
-uses native amd64 or explicit Box64 dispatch, and rejects unsupported platforms.
-For ARM game apphosts `StardewModdingAPI` and `Stardew Valley`, it forces
-`BOX64_DYNAREC_CALLRET=0`, including over inherited CALLRET settings.
-This disables CALL/RET optimization, not dynarec. Native amd64 and unrelated
-executables remain unchanged; do not scatter duplicate settings across other
-surfaces or replace this with a global interpreter fallback.
-On an amd64 host, QEMU/binfmt runs ARM userspace; Box64 then runs the x86-64
-game inside it. Do not confuse these layers or infer architecture solely from
+The final stage selects `TARGETPLATFORM`; both members use native apphosts.
+SMAPI is pinned to 4.5.2 with installer SHA-256
+`dd01ddca7b566bfe0d3b3d2d03833496abc56c53da976241f2ab443f5484acc4`.
+The ARM overlay is ValleyCore-SMAPI 1.6.15g with SHA-256
+`e5949546b0574aaa7b8bf87939569c3cd4d1336857717d01aa9fb88bb3d7c467`.
+Preparation occurs on private copies, never by patching `src/steam` or `mods/`.
+It validates PE/CLR structure, changes only permitted AMD64 Machine markers,
+preserves AnyCPU/32-bit assemblies for SMAPI rewriting, and validates mod IDs
+including supported JSON comments/BOMs. Do not use fixed-byte blind patching.
+Native SDL2/OpenAL are installed. ARM quarantines known x86 libraries outside
+the game search path and omits x86 Steam SDK files; never invent ARM store stubs.
+ValleyCore includes out-of-support .NET 6.0.32. A newer runtime is separate work.
+At launch, `/opt/stardew/container/exec-game.sh` validates actual container/ELF
+architecture and directly execs the native apphost with all arguments.
+There is no Box64 package, repository, CALLRET override or fallback.
+On an amd64 host, QEMU/binfmt still executes native ARM64 guest userspace.
+Do not confuse host emulator mappings with guest runtime mappings, or infer architecture solely from
 host-default image inspection. On the validation host, `podman create
 --platform linux/arm64` selected amd64 from the manifest, whereas `podman run`
 selected ARM64. Use run-based probes, matching the helper, and verify actual
@@ -172,11 +185,43 @@ user data; there is no automatic rollback command.
   Config-volume marker persistence does not prove real game-save correctness;
   process termination does not prove graceful in-game saving.
 - Keep native ARM hardware support/performance uncertified and separate from
-  actual ARM64 userspace under host QEMU, with Box64 executing the x86_64 game.
+  actual native ARM64 guest execution under host QEMU.
 - Report incomplete or blocked platforms explicitly; never mark the matrix
   complete from one passing member.
 
-### Passed newer-Box64 evidence: September 19, 2026
+### Passed native ARM64 and mod evidence: September 19, 2026
+
+The final no-cache two-platform build passed. Both actual platforms loaded the
+three default and all nine effective mods by identity. Native guest apphosts
+and mapped runtime libraries, absence of Box64/quarantined x86 mappings, HTTP
+and llvmpipe OpenGL 4.5 passed. Crops/TimeSpeed generated their current-schema
+defaults on both platforms; no old environment-template migration was applied.
+The supplied Friends Forever ZIP loaded under its embedded 1.2.3 identity.
+
+Repeated ARM starts and both-platform lifecycle passed: marker recreation and
+host ownership, TERM143, KILL137, dead-readiness rejection and exact cleanup.
+Protected game/state/backup/settings/audit and unrelated workloads were unchanged;
+mod replacements are intentional and separately checksummed. The final manifest
+was stable, all recorded final containers were absent, and staged credentials
+and lifecycle markers were removed. No gameplay/store/multiplayer, real-save,
+fresh VNC authentication, audio hardware or physical ARM certification is implied.
+
+Final evidence: `.local/validation/native-arm-20260919-3/results.json`;
+`lifecycle-path` identifies its lifecycle evidence. The preceding full successful
+matrix is retained under `native-arm-20260919-2`. Failed old-mod compatibility
+evidence and baseline comparisons remain under `native-arm-20260919-1`.
+Current rollback:
+`localhost/stardew-dev-d9e0cf953303:rollback-pre-valleycore-20260919`.
+Keep older Box64/OS rollback aliases too; never broad-prune them.
+
+Relevant checks include `tests/native-preparation.sh`, `tests/architecture.sh`,
+42 development cases, readiness/lifecycle fixtures, legacy diagnostic guards,
+real build contexts and ShellCheck. `tests/fixtures/native-runtime.sh` is run
+inside an owned container only after exact live PID identification. Raw maps
+include host QEMU mappings; classify guest files before checking ELF architecture.
+Static Skia/LZ4 checks do not prove all lazy imports or gameplay paths executed.
+
+### Historical newer-Box64 evidence: September 19, 2026
 
 The newer-package no-cache build passed in 359 seconds. Both actual runtime
 platforms passed architecture/package checks, normal-launcher startup/loading
@@ -208,7 +253,8 @@ instruction defect and native ARM behavior are not proven. No Box64 source
 was compiled or patched, and no upstream report was published.
 
 For an explicitly requested offline diagnostic, set `ARM_IMAGE_ID` to the
-full local ARM member ID from build evidence, not the manifest or host-default
+full retained legacy ARM member ID from build evidence, not a new native image,
+the manifest or host-default
 inspection. Run the negative control and fixed control separately:
 
 ```bash
@@ -218,7 +264,8 @@ bash tests/box64-regression-fixtures.sh
 ```
 
 The harness deliberately invokes Box64 directly, bypassing launcher
-compatibility. It uses an existing immutable image, no network/host-state
+compatibility. Native-labeled images are rejected before container creation.
+It uses an existing immutable image, no network/host-state
 mounts, private bounded logs, and exact owned cleanup; it never builds,
 pulls or acquires games. Exit 0 means only an early SMAPI banner, 124 means
 the bounded diagnostic deadline, and other nonzero statuses are failures.

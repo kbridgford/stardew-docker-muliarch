@@ -5,7 +5,10 @@ id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 case "$1" in
     info) printf '{"host":{"security":{"rootless":true},"arch":"arm64"}}\n' ;;
     image)
-        printf '[{"Id":"%s","Architecture":"%s","Os":"linux"}]\n' "$3" "${MOCK_ARCH:-arm64}" ;;
+        runtime=legacy
+        [[ ${MOCK_CASE:-} != native-image ]] || runtime=native
+        printf '[{"Id":"%s","Architecture":"%s","Os":"linux","Config":{"Labels":{"io.stardew.game-runtime":"%s"}}}]\n' \
+            "$3" "${MOCK_ARCH:-arm64}" "$runtime" ;;
     run)
         shift
         while (( $# )); do
