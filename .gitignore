@@ -28,6 +28,7 @@ steamcmd/*
 *steamcmd.tar.gz
 valleybin/*
 /src/
+/downloads/
 /.local/
 /.env
 *.local.env
