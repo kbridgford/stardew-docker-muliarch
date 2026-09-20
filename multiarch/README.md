@@ -64,7 +64,11 @@ Named contexts supply the shared game cache (`steam`), common Bash helpers
 (`devtools`), and repository-root `mods/` (`mods`). Their paths are `src/steam`,
 `scripts`, and `mods`, respectively. The replacement packages are versioned in
 `mods/`; see [mod inputs](../docs/mod-updates.md) for provenance. Crops Anytime
-Anywhere and TimeSpeed use mod defaults, not the retired environment templates.
+Anywhere and TimeSpeed expose current-schema tuning through Compose environment
+variables, including per-location seconds/minute, freeze controls, crop season/
+location selectors and tillable tile types. Templates seed only missing/empty
+configs; existing configs remain authoritative. See the runbook's tuning section
+for defaults, examples and old-to-new variable names.
 The Compose definition is standalone and owns its environment, ports
 and save/config mounts; it does not extend another project's service. No game
 copy or external symlink traversal through Docker `COPY` is required.

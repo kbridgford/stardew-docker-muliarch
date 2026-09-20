@@ -35,10 +35,19 @@ if [ "${STARDEW_MODDED:-1}" = 1 ]; then
         if [ -f "$mod_path/config.json.template" ] && [ ! -s "$mod_path/config.json" ]; then
             temporary=$(mktemp)
             envsubst < "$mod_path/config.json.template" > "$temporary"
-            if ! jq -e . "$temporary" >/dev/null; then
+            if ! jq -e -s 'length == 1 and (.[0] | type == "object")' "$temporary" >/dev/null; then
                 rm -f "$temporary"
                 echo "Invalid generated configuration for $(basename "$mod_path")." >&2
                 exit 1
+            fi
+            if [ -f "$mod_path/config.json.template.jq" ]; then
+                filtered=$(mktemp)
+                if ! jq -e -f "$mod_path/config.json.template.jq" "$temporary" > "$filtered"; then
+                    rm -f "$temporary" "$filtered"
+                    echo "Invalid generated configuration for $(basename "$mod_path")." >&2
+                    exit 1
+                fi
+                mv "$filtered" "$temporary"
             fi
             cat "$temporary" > "$mod_path/config.json"
             rm -f "$temporary"

@@ -33,9 +33,20 @@ Missing bundled manifests fail builds. There is no separate mod-pack workflow.
 Keep the existing directory names
 so enable variables remain compatible. Preserve AutoLoadGame 1.0.3 and
 UnlimitedPlayers 2024.4.16 unless a verified update is explicitly selected.
-Crops Anytime Anywhere and TimeSpeed use upstream defaults on fresh config,
-not translated old behavior; their former environment settings are rejected by
-the helper. Existing nonempty configs and all mod enable defaults are preserved.
+Crops Anytime Anywhere and TimeSpeed now have current-schema tuning templates.
+The Compose defaults target the old settings' intent: 0.7 seconds per game minute
+in all five time categories, festival changes off, host-controlled time,
+all-season/all-location planting, and dirt/grass tilling. Both mods remain
+disabled by default. Existing nonempty configs are never overwritten.
+Read the runbook's optional-mod tuning section for exact variables and mappings.
+Use seconds per minute, not old ten-minute tick lengths. Crop selectors are
+JSON arrays: empty seasons produces no rules, while empty locations/contexts
+means unrestricted. Explicit location names avoid the upstream reversed
+Indoors/Outdoors aliases, which the generator rejects. Undeclared/retired tuning
+names fail in the helper; do not add silent legacy aliases.
+The adjacent `config.json.template.jq` filters enforce types and ranges before
+installing generated config. Keep these filters with their templates. Use the
+Compose/helper environment contract instead of duplicating its defaults.
 Friends Forever's supplied ZIP is advertised as 1.2.11 but embeds 1.2.3 and
 `IsaacS.FriendsForever`; preserve and report that discrepancy, never relabel it.
 The standalone Compose file is `multiarch/docker-compose-steam.yml`; the helper
@@ -189,7 +200,37 @@ user data; there is no automatic rollback command.
 - Report incomplete or blocked platforms explicitly; never mark the matrix
   complete from one passing member.
 
-### Passed native ARM64 and mod evidence: September 19, 2026
+### Passed tuning configuration evidence: September 20, 2026
+
+The cached two-platform rebuild passed default and custom configuration checks
+after full mod initialization, with all nine mods on both native amd64 and ARM64
+under QEMU. Rates, freeze/host controls, key bindings, crop selectors and tilling
+were checked in the actual files. HTTP/GLX, native mappings and the unchanged
+both-platform lifecycle matrix passed. Real Docker Compose environment output
+matched the helper for default and custom settings without using a Docker daemon.
+
+Final evidence: `.local/validation/mod-tuning-20260920-3/results.json`;
+`lifecycle-path` points to the final lifecycle run. The current tuning rollback
+is `localhost/stardew-dev-d9e0cf953303:rollback-pre-tuning-20260920`.
+Protected game/existing mod payloads, state, backup, settings, audit and unrelated
+workloads were unchanged; all 21 recorded task containers were absent.
+Keep earlier native/Box64 rollback aliases and private evidence too.
+
+Two preceding runs stopped at the exact-PID guard with zero matches, once on
+ARM and once on amd64. Their manifests were restored. The cause remains
+unestablished: 43 subsequent read-only probes and the final complete matrix
+passed without weakened guards or longer timeouts. Preserve the failed evidence
+under `mod-tuning-20260920-1/` and `mod-tuning-20260920-2/`; do not describe the
+intermittent guard failure as a proven configuration bug or a fixed root cause.
+
+Run `bash tests/mod-settings.sh` for defaults/custom values, integer-overflow
+boundaries, invalid types/selectors, empty seasons, preservation and re-enabling.
+It requires `jq` and `envsubst`; do not install host packages implicitly.
+The 42 development cases, native dispatch fixtures and ShellCheck also passed.
+Configuration acceptance is not in-world time/crop behavior or multiplayer
+certification, and no existing user config was automatically migrated.
+
+### Native ARM64 migration evidence: September 19, 2026
 
 The final no-cache two-platform build passed. Both actual platforms loaded the
 three default and all nine effective mods by identity. Native guest apphosts

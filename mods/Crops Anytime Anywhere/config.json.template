@@ -1,0 +1,23 @@
+{
+  "PlantRules": [
+    {
+      "ForLocations": ${CROPS_ANYTIME_ANYWHERE_LOCATIONS},
+      "ForLocationContexts": ${CROPS_ANYTIME_ANYWHERE_LOCATION_CONTEXTS},
+      "ForSeasons": ${CROPS_ANYTIME_ANYWHERE_SEASONS},
+      "CanPlant": ${CROPS_ANYTIME_ANYWHERE_CAN_PLANT},
+      "CanGrowOutOfSeason": ${CROPS_ANYTIME_ANYWHERE_CAN_GROW_OUT_OF_SEASON},
+      "UseFruitTreesSeasonalSprites": ${CROPS_ANYTIME_ANYWHERE_USE_FRUIT_TREES_SEASONAL_SPRITES}
+    }
+  ],
+  "TillableRules": [
+    {
+      "ForLocations": ${CROPS_ANYTIME_ANYWHERE_LOCATIONS},
+      "ForLocationContexts": ${CROPS_ANYTIME_ANYWHERE_LOCATION_CONTEXTS},
+      "ForSeasons": ${CROPS_ANYTIME_ANYWHERE_SEASONS},
+      "Dirt": ${CROPS_ANYTIME_ANYWHERE_TILLABLE_DIRT},
+      "Grass": ${CROPS_ANYTIME_ANYWHERE_TILLABLE_GRASS},
+      "Stone": ${CROPS_ANYTIME_ANYWHERE_TILLABLE_STONE},
+      "Other": ${CROPS_ANYTIME_ANYWHERE_TILLABLE_OTHER}
+    }
+  ]
+}

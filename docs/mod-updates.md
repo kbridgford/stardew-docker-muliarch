@@ -20,14 +20,15 @@ the launcher derives the existing enable switches from them.
 
 The replacement DLLs, assets and translations replace the old folder payloads;
 old PDBs/DLLs are not left alongside them. Existing Always On Server and Friends
-Forever templates remain, without schema translation. Crops and TimeSpeed have
-no generated template: fresh configurations use mod defaults. Existing nonempty
-configs and the three-default/six-optional enable policy are unchanged.
+Forever templates remain, without schema translation. Crops and TimeSpeed now
+have current-schema tuning templates seeded from Compose settings when their
+config is missing or empty. Existing nonempty configs and the
+three-default/six-optional enable policy are unchanged.
 
 All nine effective mod identities loaded on both native amd64 and ARM64 under
-host QEMU with SMAPI 4.5.2. Default configurations for Crops and TimeSpeed were
-generated on both. See the native acceptance section of the local-development
-runbook for evidence and limits: loading is not gameplay certification.
+host QEMU with SMAPI 4.5.2. See the native acceptance and optional-mod tuning
+sections of the local-development runbook for the respective configuration
+policies, evidence and limits: loading is not gameplay certification.
 
 ## Replacement packages in Git
 

@@ -76,7 +76,8 @@ cat > "$work/capture" <<'SH'
 printf 'forwarded\n'
 SH
 chmod +x "$work/capture"
-sed -e "s#/config#$work/config#g" \
+sed -e "s#HOME=/config#HOME=$work/config#" \
+    -e "s#:-/config/#:-$work/config/#g" -e "s#touch /config/#touch $work/config/#" \
     -e "s#/opt/stardew/container/exec-game.sh#$work/capture#g" \
     "$ROOT/scripts/container/startapp.sh" > "$work/startapp.sh"
 GAME_PATH="$work/payload" STARDEW_MODDED=0 XDG_CONFIG_HOME="$work/config/xdg/config" \
@@ -88,9 +89,9 @@ cp "$work/game app" "$work/payload/StardewModdingAPI"
 mkdir -p "$work/payload/Mods"
 for mod in 'Crops Anytime Anywhere' TimeSpeed; do
     cp -a "$ROOT/mods/$mod" "$work/payload/Mods/$mod"
-    [[ ! -e "$work/payload/Mods/$mod/config.json" ]]
+    printf '{"preserve":"operator configuration"}\n' > "$work/payload/Mods/$mod/config.json"
 done
-for state in fresh existing; do
+for attempt in 1 2; do
     GAME_PATH="$work/payload" STARDEW_MODDED=1 \
         ENABLE_CROPSANYTIMEANYWHERE_MOD=true ENABLE_TIMESPEED_MOD=true \
         XDG_CONFIG_HOME="$work/config/xdg/config" XDG_DATA_HOME="$work/config/xdg/data" \
@@ -99,12 +100,8 @@ for state in fresh existing; do
     grep -Fxq forwarded "$work/output"
     for mod in 'Crops Anytime Anywhere' TimeSpeed; do
         config="$work/payload/Mods/$mod/config.json"
-        if [[ "$state" == fresh ]]; then
-            [[ ! -e "$config" ]]
-            printf '{"preserve":"operator configuration"}\n' > "$config"
-        else
-            grep -Fxq '{"preserve":"operator configuration"}' "$config"
-        fi
+        grep -Fxq '{"preserve":"operator configuration"}' "$config"
     done
+    printf 'PASS existing config preservation on start %s\n' "$attempt"
 done
-printf 'PASS optional mods receive no generated config; existing config is preserved\n'
+printf 'PASS existing optional-mod configs are preserved across starts\n'

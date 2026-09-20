@@ -256,24 +256,147 @@ executing it as shell code. This keeps defaults and the host aliases
 `ENABLE_AUTOLOADGAME`/`ENABLE_UNLIMITEDPLAYERS` consistent. Unsupported YAML or
 interpolation syntax fails explicitly; it is not a general YAML parser.
 
-### Optional mod configuration defaults
+### Optional mod tuning
 
-Crops Anytime Anywhere and TimeSpeed use their own defaults when enabled on a
-fresh installation. The container does not generate configuration for either
-mod or translate the old settings into newer schemas. Their enable switches,
-`ENABLE_CROPSANYTIMEANYWHERE_MOD` and `ENABLE_TIMESPEED_MOD`, remain supported
-and default to `false`. Other mods retain their existing configuration handling.
+Compose and the Podman helper expose current-schema tuning for Crops Anytime
+Anywhere 1.7.3 and TimeSpeed 2.8.1. Both enable switches still default to `false`.
+The templates seed **missing or empty** `config.json` files only; existing
+nonempty configs are never reset or migrated. Edit an existing config directly
+when you need to change it. Rebuild an older image to include these templates.
 
-The old `CROPS_ANYTIME_ANYWHERE_*` and `TIME_SPEED_*` settings are retired.
-Remove them from exported host variables and private env files; the Podman
-helper rejects them explicitly rather than silently ignoring customization.
-Standalone Compose no longer forwards these settings either.
+The defaults reproduce the old settings' **intent**, rather than the previous
+native migration's upstream defaults: seven real seconds per ten game minutes
+in each supported location, no festival-day adjustment, host-controlled time,
+all-season/all-location growing, and extra tilling on dirt/grass but not
+stone/other tiles. Earlier templates contained obsolete fields, so this is not
+a claim that those old fields actually controlled every earlier mod version.
 
-Existing nonempty `config.json` files are left untouched. This is not an
-automatic reset of user configuration: upstream defaults apply only when a
-mod creates a new configuration. Defaults belong to the installed mod version;
-the project no longer promises the old crop rules, time speed, festival policy
-or host-only time controls for these two optional mods.
+#### TimeSpeed
+
+| Environment variable | Default | Current configuration |
+|---|---|---|
+| `ENABLE_TIMESPEED_MOD` | `false` | Enable the mod |
+| `TIME_SPEED_SECONDS_PER_MINUTE_INDOORS` | `0.7` | `SecondsPerMinute.Indoors` |
+| `TIME_SPEED_SECONDS_PER_MINUTE_OUTDOORS` | `0.7` | `SecondsPerMinute.Outdoors` |
+| `TIME_SPEED_SECONDS_PER_MINUTE_MINES` | `0.7` | `SecondsPerMinute.Mines` |
+| `TIME_SPEED_SECONDS_PER_MINUTE_SKULL_CAVERN` | `0.7` | `SecondsPerMinute.SkullCavern` |
+| `TIME_SPEED_SECONDS_PER_MINUTE_VOLCANO_DUNGEON` | `0.7` | `SecondsPerMinute.VolcanoDungeon` |
+| `TIME_SPEED_ENABLE_ON_FESTIVAL_DAYS` | `false` | Apply speed adjustments on festival days |
+| `TIME_SPEED_LOCATION_NOTIFY` | `false` | Announce location-specific settings |
+| `TIME_SPEED_LET_FARMHANDS_MANAGE_TIME` | `false` | Permit farmhand time-control requests |
+| `TIME_SPEED_FREEZE_ANYWHERE_AT_TIME` | `null` | `FreezeTime.AnywhereAtTime`; e.g. `2200` |
+| `TIME_SPEED_FREEZE_BEFORE_PASS_OUT` | `false` | `FreezeTime.PassOut` |
+| `TIME_SPEED_FREEZE_INDOORS` / `OUTDOORS` / `MINES` / `SKULL_CAVERN` / `VOLCANO_DUNGEON` | `false` each | Corresponding `FreezeTime` location switch |
+| `TIME_SPEED_KEYS_FREEZE_TIME` | `N` | Freeze/unfreeze key binding |
+| `TIME_SPEED_KEYS_INCREASE_TICK_INTERVAL` | `OemPeriod` | Slow down time |
+| `TIME_SPEED_KEYS_DECREASE_TICK_INTERVAL` | `OemComma` | Speed up time |
+| `TIME_SPEED_KEYS_RELOAD_CONFIG` | `B` | Reload config |
+
+Rates are **seconds per one in-game minute**, not the old ten-minute tick
+length. Divide an old tick value by ten: `7` becomes `0.7`, `14` becomes `1.4`.
+Rates must be numbers from `0.001` through `214748.364`, avoiding zero-millisecond
+ticks and overflow in the mod's integer ten-minute interval. Use the freeze
+switches instead of a zero rate. The freeze clock accepts `null` or integer
+HHMM values from `600` through `2600`, with minutes below 60; midnight is `2400`.
+Use valid SMAPI key bindings, including combinations like `LeftShift + N`;
+an empty key binding disables that control.
+
+#### Crops Anytime Anywhere
+
+| Environment variable | Default | Behavior |
+|---|---|---|
+| `ENABLE_CROPSANYTIMEANYWHERE_MOD` | `false` | Enable the mod |
+| `CROPS_ANYTIME_ANYWHERE_SEASONS` | `["Spring","Summer","Fall","Winter"]` | Seasons in which the generated planting/tilling rules apply |
+| `CROPS_ANYTIME_ANYWHERE_LOCATIONS` | `[]` | All locations; use `["Farm"]` to restrict overrides to the farm |
+| `CROPS_ANYTIME_ANYWHERE_LOCATION_CONTEXTS` | `[]` | All contexts; optionally restrict by internal context ID |
+| `CROPS_ANYTIME_ANYWHERE_CAN_PLANT` | `true` | `PlantRules[].CanPlant` |
+| `CROPS_ANYTIME_ANYWHERE_CAN_GROW_OUT_OF_SEASON` | `true` | `PlantRules[].CanGrowOutOfSeason` |
+| `CROPS_ANYTIME_ANYWHERE_USE_FRUIT_TREES_SEASONAL_SPRITES` | `false` | Seasonal fruit-tree appearance |
+| `CROPS_ANYTIME_ANYWHERE_TILLABLE_DIRT` | `true` | Force additional dirt tiles tillable |
+| `CROPS_ANYTIME_ANYWHERE_TILLABLE_GRASS` | `true` | Force grass tiles tillable |
+| `CROPS_ANYTIME_ANYWHERE_TILLABLE_STONE` | `false` | Force stone tiles tillable |
+| `CROPS_ANYTIME_ANYWHERE_TILLABLE_OTHER` | `false` | Force other tiles, such as paths/floors, tillable |
+
+Selectors are JSON arrays, not comma-separated plain text. Season names are
+case-insensitive and normalized. `SEASONS=[]` produces **empty rule lists** so
+the mod adds no planting/tilling overrides; it must not accidentally mean all
+seasons, which is the upstream meaning of an empty rule's `ForSeasons` selector.
+An empty locations/contexts array still means unrestricted.
+
+The same selectors apply to the planting and tilling rules. Outside matching
+seasons/locations, vanilla rules apply. Use explicit internal location names:
+the pinned upstream code reverses the `Indoors`/`Outdoors` aliases, so the
+generator rejects those aliases rather than applying the opposite restriction.
+For more complex independent rules or per-location rate maps, supply your own
+complete `config.json` instead of mixing an existing file with env overrides.
+
+Example literal entries usable in the private helper env file or Compose `.env`:
+
+```text
+ENABLE_TIMESPEED_MOD=true
+TIME_SPEED_SECONDS_PER_MINUTE_INDOORS=1.4
+TIME_SPEED_FREEZE_ANYWHERE_AT_TIME=2200
+ENABLE_CROPSANYTIMEANYWHERE_MOD=true
+CROPS_ANYTIME_ANYWHERE_SEASONS=["Spring","Summer","Fall"]
+CROPS_ANYTIME_ANYWHERE_LOCATIONS=["Farm"]
+CROPS_ANYTIME_ANYWHERE_TILLABLE_STONE=true
+```
+
+#### Replacing old controls
+
+| Old setting | New equivalent |
+|---|---|
+| `TIME_SPEED_DEFAULT_TICK_LENGTH` | Set the five `SECONDS_PER_MINUTE_*` rates to the old value divided by ten |
+| `TIME_SPEED_TICK_LENGTH_BY_LOCATION_INDOORS` / `OUTDOORS` / `MINE` | Corresponding `SECONDS_PER_MINUTE_INDOORS` / `OUTDOORS` / `MINES`, divided by ten |
+| `TIME_SPEED_FREEZE_TIME_AT` | `TIME_SPEED_FREEZE_ANYWHERE_AT_TIME` |
+| `CROPS_ANYTIME_ANYWHERE_ENABLE_IN_SEASONS_*` | Include each enabled season in `CROPS_ANYTIME_ANYWHERE_SEASONS` |
+| `CROPS_ANYTIME_ANYWHERE_FARM_ANY_LOCATION` | `LOCATIONS=[]` for all locations; `LOCATIONS=["Farm"]` for farm-only overrides |
+| `CROPS_ANYTIME_ANYWHERE_FORCE_TILLABLE_*` | Corresponding `CROPS_ANYTIME_ANYWHERE_TILLABLE_*` boolean |
+
+The old names above are not silent aliases. The helper rejects undeclared
+`TIME_SPEED_*` / `CROPS_ANYTIME_ANYWHERE_*` keys, including typos and retired
+names; standalone Compose only forwards variables declared in its environment
+list. Festival, notification and key-binding names that still match the schema
+are supported again. Generated config is checked for a single JSON object and
+validated by the adjacent `config.json.template.jq` before it is installed.
+Malformed arrays, wrong types and invalid ranges fail explicitly before the
+game launches, without substituting mod defaults.
+
+Schema references: pinned
+[TimeSpeed configuration](https://github.com/cantorsdust/StardewMods/blob/2c98ec22bb8c037d2afd28058baab26dcf300b81/TimeSpeed/Framework/ModConfig.cs),
+[time interval calculation](https://github.com/cantorsdust/StardewMods/blob/2c98ec22bb8c037d2afd28058baab26dcf300b81/TimeSpeed/ModEntry.cs),
+and [Crops rule matching](https://github.com/Pathoschild/StardewMods/blob/b2d750f944dff2c0a540a02dd2af653b09e378c4/CropsAnytimeAnywhere/Framework/BaseRule.cs).
+
+#### Tuning validation: September 20, 2026
+
+The cached dual-platform rebuild and final matrix passed with all nine mods
+initialized on native amd64 and ARM64 under host QEMU. Both default and custom
+settings were checked in the actual generated files, including per-location
+rates, host/farmhand control, freeze settings, key bindings, crop seasons,
+farm-only selectors and stone tilling. HTTP/GLX, native runtime mappings and
+both-platform lifecycle guards passed. Real Docker Compose interpolation
+(`docker:28.4.0-cli`, isolated without a daemon) matched the helper's entire
+environment for both default and custom inputs.
+
+Private final results: `.local/validation/mod-tuning-20260920-3/results.json`;
+`lifecycle-path` identifies the final lifecycle evidence. The pre-tuning native
+manifest is retained as
+`localhost/stardew-dev-d9e0cf953303:rollback-pre-tuning-20260920`.
+Protected game/mod payloads, state, backup, settings, audit and unrelated
+workloads were unchanged; all 21 recorded task containers were absent afterward.
+
+Two earlier runs stopped at the strict process-identity guard with zero matching
+live PIDs (first an ARM lifecycle step, then an amd64 startup probe). Both
+restored the accepted baseline. Logs showed mod initialization, but the cause
+of the intermittent guard failures was not established. Forty-three subsequent
+read-only identity probes passed, followed by the complete final matrix without
+weakening guards or extending timeouts. Failed evidence and diagnostics remain
+in `mod-tuning-20260920-1/` and `mod-tuning-20260920-2/`.
+
+Fixture coverage includes numeric overflow/zero-rate rejection, JSON types,
+selectors, empty seasons, existing-config preservation and disable/re-enable.
+This verifies configuration and the existing startup/lifecycle boundary, not
+in-world clock progression, crop behavior, multiplayer or physical ARM hardware.
 
 ## 4. Run in isolated development state
 
@@ -707,6 +830,7 @@ Fast Bash-only regression suite (synthetic fixtures, no game downloads):
 ```bash
 bash tests/development.sh
 bash tests/architecture.sh
+bash tests/mod-settings.sh
 bash tests/readiness.sh
 bash tests/fixtures/lifecycle-regressions.sh
 bash tests/migration.sh
@@ -717,6 +841,8 @@ It covers validation, symlinks/modes, publication/recovery, explicit acquisition
 through mocked SteamCMD in a pseudoterminal, failure preservation, lock coverage,
 Compose defaults, Podman arguments, ownership, private env handling, and rejection
 of stale/early SMAPI logs as readiness evidence.
+The tuning fixtures also require host `envsubst` (from `gettext-base`); they
+render the actual Compose defaults/templates without launching the game.
 
 `bash tests/container-context.sh` additionally builds only the validation
 stages with synthetic data and checks the surviving project's context exclusions. It may

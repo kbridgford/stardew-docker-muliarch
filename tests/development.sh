@@ -174,8 +174,8 @@ case "$1" in
             [[ "${SETTINGS[VNC_PASSWORD]}" == synthetic-password ]]
         done ;;
     mod-defaults)
-        [[ ! -e "$ROOT/mods/Crops Anytime Anywhere/config.json.template" ]]
-        [[ ! -e "$ROOT/mods/TimeSpeed/config.json.template" ]]
+        [[ -s "$ROOT/mods/Crops Anytime Anywhere/config.json.template" ]]
+        [[ -s "$ROOT/mods/TimeSpeed/config.json.template" ]]
         ROOT=$test_repo
         source "$ROOT/scripts/lib/podman-steam.sh"
         declare -A SETTINGS=() PRIVATE_ENV=([VNC_PASSWORD]=synthetic-password)
@@ -183,16 +183,22 @@ case "$1" in
         compose_environment
         [[ "${SETTINGS[ENABLE_TIMESPEED_MOD]}" == false ]]
         [[ "${SETTINGS[ENABLE_CROPSANYTIMEANYWHERE_MOD]}" == false ]]
-        for key in "${!SETTINGS[@]}"; do
-            case "$key" in TIME_SPEED_*|CROPS_ANYTIME_ANYWHERE_*) exit 1 ;; esac
-        done
+        [[ "${SETTINGS[TIME_SPEED_SECONDS_PER_MINUTE_INDOORS]}" == 0.7 ]]
+        [[ "${SETTINGS[TIME_SPEED_LET_FARMHANDS_MANAGE_TIME]}" == false ]]
+        [[ "${SETTINGS[CROPS_ANYTIME_ANYWHERE_LOCATIONS]}" == '[]' ]]
+        [[ "${SETTINGS[CROPS_ANYTIME_ANYWHERE_SEASONS]}" == '["Spring","Summer","Fall","Winter"]' ]]
+        PRIVATE_ENV[TIME_SPEED_SECONDS_PER_MINUTE_INDOORS]=1.2
+        PRIVATE_ENV[CROPS_ANYTIME_ANYWHERE_LOCATIONS]='["Farm"]'
+        compose_environment
+        [[ "${SETTINGS[TIME_SPEED_SECONDS_PER_MINUTE_INDOORS]}" == 1.2 ]]
+        [[ "${SETTINGS[CROPS_ANYTIME_ANYWHERE_LOCATIONS]}" == '["Farm"]' ]]
         for key in TIME_SPEED_DEFAULT_TICK_LENGTH CROPS_ANYTIME_ANYWHERE_FARM_ANY_LOCATION; do
             PRIVATE_ENV["$key"]=true
             if (compose_environment) > "$work/error" 2>&1; then exit 1; fi
-            grep -Fq "Retired setting: $key." "$work/error"
+            grep -Fq "Unsupported or retired setting: $key." "$work/error"
             unset 'PRIVATE_ENV[$key]'
             if (export "$key=true"; compose_environment) > "$work/error" 2>&1; then exit 1; fi
-            grep -Fq "Retired setting: $key." "$work/error"
+            grep -Fq "Unsupported or retired setting: $key." "$work/error"
         done ;;
     compose-empty)
         ROOT=$test_repo

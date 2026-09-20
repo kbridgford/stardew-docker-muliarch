@@ -105,12 +105,6 @@ compose_environment() {
     local line active=no key expression source operator fallback
     local -a environment_keys
     mapfile -t environment_keys < <(compgen -e)
-    for key in "${environment_keys[@]}" "${!PRIVATE_ENV[@]}"; do
-        case "$key" in
-            TIME_SPEED_*|CROPS_ANYTIME_ANYWHERE_*)
-                steam_die "Retired setting: $key. Remove it; TimeSpeed and Crops Anytime Anywhere now use mod defaults or an existing config.json." ;;
-        esac
-    done
     local assignment='^      - ([A-Z][A-Z0-9_]*)=(.*)$'
     local substitution='^\$\{([A-Z][A-Z0-9_]*)(-|:\?)(.*)\}$'
     SETTINGS=()
@@ -134,6 +128,13 @@ compose_environment() {
         fi
     done < "$ROOT/$COMPOSE_DIRECTORY/docker-compose-steam.yml"
     (( ${#SETTINGS[@]} > 0 )) || steam_die 'Compose environment contract is empty.'
+    for key in "${environment_keys[@]}" "${!PRIVATE_ENV[@]}"; do
+        case "$key" in
+            TIME_SPEED_*|CROPS_ANYTIME_ANYWHERE_*)
+                [[ -v "SETTINGS[$key]" ]] ||
+                    steam_die "Unsupported or retired setting: $key. See the tuning controls in docs/local-development.md." ;;
+        esac
+    done
     for key in "${!PRIVATE_ENV[@]}"; do
         if [[ -v "SETTINGS[$key]" ]]; then SETTINGS["$key"]=${PRIVATE_ENV[$key]}; fi
     done

@@ -1,0 +1,30 @@
+{
+  "EnableOnFestivalDays": ${TIME_SPEED_ENABLE_ON_FESTIVAL_DAYS},
+  "LocationNotify": ${TIME_SPEED_LOCATION_NOTIFY},
+  "LetFarmhandsManageTime": ${TIME_SPEED_LET_FARMHANDS_MANAGE_TIME},
+  "SecondsPerMinute": {
+    "Indoors": ${TIME_SPEED_SECONDS_PER_MINUTE_INDOORS},
+    "Outdoors": ${TIME_SPEED_SECONDS_PER_MINUTE_OUTDOORS},
+    "Mines": ${TIME_SPEED_SECONDS_PER_MINUTE_MINES},
+    "SkullCavern": ${TIME_SPEED_SECONDS_PER_MINUTE_SKULL_CAVERN},
+    "VolcanoDungeon": ${TIME_SPEED_SECONDS_PER_MINUTE_VOLCANO_DUNGEON},
+    "ByLocationName": {}
+  },
+  "FreezeTime": {
+    "AnywhereAtTime": ${TIME_SPEED_FREEZE_ANYWHERE_AT_TIME},
+    "PassOut": ${TIME_SPEED_FREEZE_BEFORE_PASS_OUT},
+    "Indoors": ${TIME_SPEED_FREEZE_INDOORS},
+    "Outdoors": ${TIME_SPEED_FREEZE_OUTDOORS},
+    "Mines": ${TIME_SPEED_FREEZE_MINES},
+    "SkullCavern": ${TIME_SPEED_FREEZE_SKULL_CAVERN},
+    "VolcanoDungeon": ${TIME_SPEED_FREEZE_VOLCANO_DUNGEON},
+    "ByLocationName": [],
+    "ExceptLocationNames": []
+  },
+  "Keys": {
+    "FreezeTime": "${TIME_SPEED_KEYS_FREEZE_TIME}",
+    "IncreaseTickInterval": "${TIME_SPEED_KEYS_INCREASE_TICK_INTERVAL}",
+    "DecreaseTickInterval": "${TIME_SPEED_KEYS_DECREASE_TICK_INTERVAL}",
+    "ReloadConfig": "${TIME_SPEED_KEYS_RELOAD_CONFIG}"
+  }
+}
